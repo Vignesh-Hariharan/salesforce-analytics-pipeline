@@ -1,0 +1,109 @@
+id: asana-poller
+namespace: salesforce.analytics
+
+description: Polls Asana every 6 hours for tasks with workflow tags and triggers corresponding pipelines
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 */6 * * *"
+    disabled: false
+
+tasks:
+  - id: check_asana_tasks
+    type: io.kestra.plugin.scripts.python.Script
+    warningOnStdErr: false
+    docker:
+      image: python:3.11-slim
+    beforeCommands:
+      - pip install requests python-dotenv
+    env:
+      ASANA_ACCESS_TOKEN: "{{ secret('ASANA_ACCESS_TOKEN') }}"
+      ASANA_PROJECT_GID: "{{ secret('ASANA_PROJECT_GID') }}"
+    script: |
+      import os
+      import requests
+      import json
+      
+      access_token = os.getenv('ASANA_ACCESS_TOKEN')
+      project_gid = os.getenv('ASANA_PROJECT_GID')
+      
+      base_url = "https://app.asana.com/api/1.0"
+      headers = {
+          "Authorization": f"Bearer {access_token}",
+          "Accept": "application/json"
+      }
+      
+      url = f"{base_url}/projects/{project_gid}/tasks"
+      params = {
+          "opt_fields": "name,tags.name,completed,gid,permalink_url"
+      }
+      
+      response = requests.get(url, headers=headers, params=params, timeout=10)
+      response.raise_for_status()
+      
+      all_tasks = response.json()['data']
+      
+      target_tags = ['sales-pipeline-health', 'rep-performance', 'revenue-forecast']
+      filtered_tasks = []
+      
+      for task in all_tasks:
+          if task['completed']:
+              continue
+          
+          task_tags = [tag['name'] for tag in task.get('tags', [])]
+          for target_tag in target_tags:
+              if target_tag in task_tags:
+                  filtered_tasks.append({
+                      'gid': task['gid'],
+                      'name': task['name'],
+                      'tag': target_tag,
+                      'url': task.get('permalink_url', '')
+                  })
+                  break
+      
+      print(json.dumps(filtered_tasks))
+      
+      with open('tasks.json', 'w') as f:
+          json.dump(filtered_tasks, f)
+    
+    outputs:
+      - id: tasks_file
+        type: JSON
+        value: "{{ read('tasks.json') }}"
+  
+  - id: process_tasks
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{ outputs.check_asana_tasks.tasks_file }}"
+    tasks:
+      - id: trigger_workflow
+        type: io.kestra.plugin.core.flow.Switch
+        value: "{{ taskrun.value.tag }}"
+        cases:
+          sales-pipeline-health:
+            - id: trigger_pipeline_health
+              type: io.kestra.plugin.core.flow.Subflow
+              namespace: salesforce.analytics
+              flowId: pipeline-health-workflow
+              inputs:
+                asana_task_gid: "{{ taskrun.value.gid }}"
+                asana_task_url: "{{ taskrun.value.url }}"
+          
+          rep-performance:
+            - id: trigger_rep_performance
+              type: io.kestra.plugin.core.flow.Subflow
+              namespace: salesforce.analytics
+              flowId: rep-performance-workflow
+              inputs:
+                asana_task_gid: "{{ taskrun.value.gid }}"
+                asana_task_url: "{{ taskrun.value.url }}"
+          
+          revenue-forecast:
+            - id: trigger_revenue_forecast
+              type: io.kestra.plugin.core.flow.Subflow
+              namespace: salesforce.analytics
+              flowId: revenue-forecast-workflow
+              inputs:
+                asana_task_gid: "{{ taskrun.value.gid }}"
+                asana_task_url: "{{ taskrun.value.url }}"
+

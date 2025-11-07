@@ -1,0 +1,72 @@
+id: rep-performance-workflow
+namespace: salesforce.analytics
+
+description: Analyzes sales rep performance patterns and success drivers
+
+inputs:
+  - id: asana_task_gid
+    type: STRING
+    required: false
+  - id: asana_task_url
+    type: STRING
+    required: false
+
+tasks:
+  - id: validate_environment
+    type: io.kestra.plugin.scripts.shell.Commands
+    commands:
+      - echo "Validating environment variables"
+      - test -n "$SNOWFLAKE_ACCOUNT" || (echo "SNOWFLAKE_ACCOUNT not set" && exit 1)
+      - test -n "$SALESFORCE_USERNAME" || (echo "SALESFORCE_USERNAME not set" && exit 1)
+      - test -n "$GEMINI_API_KEY" || (echo "GEMINI_API_KEY not set" && exit 1)
+      - echo "Environment validation passed"
+    env:
+      SNOWFLAKE_ACCOUNT: "{{ secret('SNOWFLAKE_ACCOUNT') }}"
+      SALESFORCE_USERNAME: "{{ secret('SALESFORCE_USERNAME') }}"
+      GEMINI_API_KEY: "{{ secret('GEMINI_API_KEY') }}"
+  
+  - id: run_pipeline
+    type: io.kestra.plugin.scripts.python.Commands
+    warningOnStdErr: false
+    docker:
+      image: python:3.11-slim
+    beforeCommands:
+      - pip install -r /app/python/requirements.txt
+    commands:
+      - cd /app/python
+      - |
+        python main.py rep-performance {{ inputs.asana_task_gid }} {{ inputs.asana_task_url }}
+    env:
+      SNOWFLAKE_ACCOUNT: "{{ secret('SNOWFLAKE_ACCOUNT') }}"
+      SNOWFLAKE_USER: "{{ secret('SNOWFLAKE_USER') }}"
+      SNOWFLAKE_PASSWORD: "{{ secret('SNOWFLAKE_PASSWORD') }}"
+      SNOWFLAKE_DATABASE: "SALES_ANALYTICS"
+      SNOWFLAKE_SCHEMA: "OPPORTUNITIES"
+      SNOWFLAKE_WAREHOUSE: "COMPUTE_WH"
+      SALESFORCE_USERNAME: "{{ secret('SALESFORCE_USERNAME') }}"
+      SALESFORCE_PASSWORD: "{{ secret('SALESFORCE_PASSWORD') }}"
+      SALESFORCE_SECURITY_TOKEN: "{{ secret('SALESFORCE_SECURITY_TOKEN') }}"
+      SALESFORCE_DOMAIN: "test"
+      GEMINI_API_KEY: "{{ secret('GEMINI_API_KEY') }}"
+      SLACK_WEBHOOK_URL: "{{ secret('SLACK_WEBHOOK_URL') }}"
+      ASANA_ACCESS_TOKEN: "{{ secret('ASANA_ACCESS_TOKEN') }}"
+      ASANA_PROJECT_GID: "{{ secret('ASANA_PROJECT_GID') }}"
+    retry:
+      type: constant
+      interval: PT30S
+      maxAttempt: 3
+      warningOnRetry: true
+  
+  - id: log_completion
+    type: io.kestra.plugin.scripts.shell.Commands
+    commands:
+      - echo "Rep performance workflow completed successfully"
+      - echo "Task GID: {{ inputs.asana_task_gid }}"
+
+errors:
+  - id: handle_error
+    type: io.kestra.plugin.scripts.shell.Commands
+    commands:
+      - echo "Rep performance workflow failed"
+      - echo "Error details logged to Snowflake and Asana"
+

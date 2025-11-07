@@ -1,0 +1,9 @@
+simple-salesforce==1.12.6
+snowflake-connector-python==3.7.1
+google-generativeai==0.4.0
+requests==2.31.0
+matplotlib==3.8.3
+pandas==2.2.1
+python-dotenv==1.0.1
+Pillow==10.2.0
+
