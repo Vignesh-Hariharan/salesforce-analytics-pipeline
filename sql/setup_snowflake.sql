@@ -1,4 +1,4 @@
--- Snowflake Setup Script (Simplified)
+-- Snowflake Setup
 
 CREATE DATABASE IF NOT EXISTS SALES_ANALYTICS;
 USE DATABASE SALES_ANALYTICS;
