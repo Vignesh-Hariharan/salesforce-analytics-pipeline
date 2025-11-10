@@ -14,7 +14,7 @@ CREATE WAREHOUSE IF NOT EXISTS COMPUTE_WH
 
 USE WAREHOUSE COMPUTE_WH;
 
--- Drop tables if they exist (fresh start)
+-- Drop tables if they exist 
 DROP TABLE IF EXISTS dim_activities;
 DROP TABLE IF EXISTS fact_opportunities;
 DROP TABLE IF EXISTS pipeline_runs;
