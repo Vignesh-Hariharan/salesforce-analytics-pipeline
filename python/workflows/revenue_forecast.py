@@ -35,7 +35,16 @@ def run_workflow(run_id: str) -> Dict:
     try:
         opportunities = sf_client.get_opportunities(days=90)
         if not opportunities:
+            logger.warning("No opportunities found in Salesforce for the last 90 days")
             raise ValueError("No opportunities found in Salesforce")
+        
+        valid_opps = [o for o in opportunities if o.get('opportunity_id') and o.get('opportunity_name')]
+        if len(valid_opps) < len(opportunities):
+            logger.warning(f"Filtered out {len(opportunities) - len(valid_opps)} invalid opportunities")
+        opportunities = valid_opps
+        
+        if not opportunities:
+            raise ValueError("No valid opportunities found after data validation")
         
         opp_ids = [o['opportunity_id'] for o in opportunities]
         activities = sf_client.get_activities(opp_ids)
@@ -132,8 +141,8 @@ def calculate_metrics(snow_client: SnowflakeClient) -> Dict:
         WHERE NOT is_closed AND amount > 0
     """
     pipeline_result = snow_client.execute_query(pipeline_query)
-    total_pipeline = pipeline_result[0].get('TOTAL_PIPELINE', 0) if pipeline_result else 0
-    open_opps = pipeline_result[0].get('OPEN_OPPS', 0) if pipeline_result else 0
+    total_pipeline = float(pipeline_result[0].get('TOTAL_PIPELINE', 0)) if pipeline_result and pipeline_result[0].get('TOTAL_PIPELINE') else 0.0
+    open_opps = int(pipeline_result[0].get('OPEN_OPPS', 0)) if pipeline_result else 0
     
     stage_query = """
         SELECT 
@@ -150,7 +159,7 @@ def calculate_metrics(snow_client: SnowflakeClient) -> Dict:
     stage_forecasts = []
     for stage in stage_data:
         stage_name = stage['STAGE_NAME']
-        stage_value = stage['STAGE_VALUE']
+        stage_value = float(stage['STAGE_VALUE']) if stage['STAGE_VALUE'] else 0.0
         weight = STAGE_WEIGHTS.get(stage_name, 0.25)
         weighted_value = stage_value * weight
         weighted_forecast += weighted_value
@@ -179,7 +188,7 @@ def calculate_metrics(snow_client: SnowflakeClient) -> Dict:
         WHERE NOT is_closed AND days_open > 90
     """
     at_risk_result = snow_client.execute_query(at_risk_query)
-    at_risk_value = at_risk_result[0].get('AT_RISK_VALUE', 0) if at_risk_result else 0
+    at_risk_value = float(at_risk_result[0].get('AT_RISK_VALUE', 0)) if at_risk_result and at_risk_result[0].get('AT_RISK_VALUE') else 0.0
     
     confidence = 75 if weighted_forecast > 0 else 0
     
@@ -243,6 +252,7 @@ def generate_charts(snow_client: SnowflakeClient, metrics: Dict) -> List[Path]:
     if metrics['historical_revenue']:
         df_hist = pd.DataFrame(metrics['historical_revenue'])
         df_hist['MONTH'] = pd.to_datetime(df_hist['MONTH']).dt.strftime('%b')
+        df_hist['REVENUE'] = df_hist['REVENUE'].apply(lambda x: float(x) if x else 0.0)
         
         plt.figure(figsize=(10, 6))
         plt.plot(df_hist['MONTH'], df_hist['REVENUE'], marker='o', linewidth=2, color='steelblue', label='Actual')

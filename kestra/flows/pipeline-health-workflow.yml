@@ -12,61 +12,36 @@ inputs:
     required: false
 
 tasks:
-  - id: validate_environment
-    type: io.kestra.plugin.scripts.shell.Commands
-    commands:
-      - echo "Validating environment variables"
-      - test -n "$SNOWFLAKE_ACCOUNT" || (echo "SNOWFLAKE_ACCOUNT not set" && exit 1)
-      - test -n "$SALESFORCE_USERNAME" || (echo "SALESFORCE_USERNAME not set" && exit 1)
-      - test -n "$GEMINI_API_KEY" || (echo "GEMINI_API_KEY not set" && exit 1)
-      - echo "Environment validation passed"
-    env:
-      SNOWFLAKE_ACCOUNT: "{{ secret('SNOWFLAKE_ACCOUNT') }}"
-      SALESFORCE_USERNAME: "{{ secret('SALESFORCE_USERNAME') }}"
-      GEMINI_API_KEY: "{{ secret('GEMINI_API_KEY') }}"
-  
   - id: run_pipeline
-    type: io.kestra.plugin.scripts.python.Commands
-    warningOnStdErr: false
-    docker:
-      image: python:3.11-slim
-    beforeCommands:
-      - pip install -r /app/python/requirements.txt
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
     commands:
-      - cd /app/python
       - |
-        python main.py sales-pipeline-health {{ inputs.asana_task_gid }} {{ inputs.asana_task_url }}
-    env:
-      SNOWFLAKE_ACCOUNT: "{{ secret('SNOWFLAKE_ACCOUNT') }}"
-      SNOWFLAKE_USER: "{{ secret('SNOWFLAKE_USER') }}"
-      SNOWFLAKE_PASSWORD: "{{ secret('SNOWFLAKE_PASSWORD') }}"
-      SNOWFLAKE_DATABASE: "SALES_ANALYTICS"
-      SNOWFLAKE_SCHEMA: "OPPORTUNITIES"
-      SNOWFLAKE_WAREHOUSE: "COMPUTE_WH"
-      SALESFORCE_USERNAME: "{{ secret('SALESFORCE_USERNAME') }}"
-      SALESFORCE_PASSWORD: "{{ secret('SALESFORCE_PASSWORD') }}"
-      SALESFORCE_SECURITY_TOKEN: "{{ secret('SALESFORCE_SECURITY_TOKEN') }}"
-      SALESFORCE_DOMAIN: "test"
-      GEMINI_API_KEY: "{{ secret('GEMINI_API_KEY') }}"
-      SLACK_WEBHOOK_URL: "{{ secret('SLACK_WEBHOOK_URL') }}"
-      ASANA_ACCESS_TOKEN: "{{ secret('ASANA_ACCESS_TOKEN') }}"
-      ASANA_PROJECT_GID: "{{ secret('ASANA_PROJECT_GID') }}"
+        export SNOWFLAKE_ACCOUNT=$(echo $SECRET_SNOWFLAKE_ACCOUNT | base64 -d)
+        export SNOWFLAKE_USER=$(echo $SECRET_SNOWFLAKE_USER | base64 -d)
+        export SNOWFLAKE_PASSWORD=$(echo $SECRET_SNOWFLAKE_PASSWORD | base64 -d)
+        export SALESFORCE_USERNAME=$(echo $SECRET_SALESFORCE_USERNAME | base64 -d)
+        export SALESFORCE_PASSWORD=$(echo $SECRET_SALESFORCE_PASSWORD | base64 -d)
+        export SALESFORCE_SECURITY_TOKEN=$(echo $SECRET_SALESFORCE_SECURITY_TOKEN | base64 -d)
+        export SALESFORCE_DOMAIN=$(echo $SECRET_SALESFORCE_DOMAIN | base64 -d)
+        export GEMINI_API_KEY=$(echo $SECRET_GEMINI_API_KEY | base64 -d)
+        export SLACK_WEBHOOK_URL=$(echo $SECRET_SLACK_WEBHOOK_URL | base64 -d)
+        export ASANA_ACCESS_TOKEN=$(echo $SECRET_ASANA_ACCESS_TOKEN | base64 -d)
+        export ASANA_PROJECT_GID=$(echo $SECRET_ASANA_PROJECT_GID | base64 -d)
+        export SNOWFLAKE_DATABASE="SALES_ANALYTICS"
+        export SNOWFLAKE_SCHEMA="OPPORTUNITIES"
+        export SNOWFLAKE_WAREHOUSE="COMPUTE_WH"
+        cd /app/python && python3 -m pip install -q -r requirements.txt && python3 main.py sales-pipeline-health {{ inputs.asana_task_gid ?? '' }} {{ inputs.asana_task_url ?? '' }}
     retry:
       type: constant
       interval: PT30S
       maxAttempt: 3
       warningOnRetry: true
-  
-  - id: log_completion
-    type: io.kestra.plugin.scripts.shell.Commands
-    commands:
-      - echo "Pipeline health workflow completed successfully"
-      - echo "Task GID: {{ inputs.asana_task_gid }}"
 
 errors:
   - id: handle_error
     type: io.kestra.plugin.scripts.shell.Commands
     commands:
       - echo "Pipeline health workflow failed"
-      - echo "Error details logged to Snowflake and Asana"
 

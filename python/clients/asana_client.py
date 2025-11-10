@@ -10,6 +10,9 @@ logger = setup_logger(__name__)
 
 class AsanaClient:
     def __init__(self):
+        if not settings.is_asana_configured():
+            raise ValueError("Asana credentials not configured. Set ASANA_ACCESS_TOKEN and ASANA_PROJECT_GID environment variables.")
+        
         self.access_token = settings.ASANA_ACCESS_TOKEN
         self.project_gid = settings.ASANA_PROJECT_GID
         self.base_url = "https://app.asana.com/api/1.0"
@@ -125,6 +128,18 @@ class AsanaClient:
         except Exception as e:
             logger.error(f"Failed to complete task: {str(e)}")
             raise AsanaAPIError(f"Task completion failed: {str(e)}")
+    
+    @retry_on_failure(max_attempts=2, delay=1.0, exceptions=(requests.RequestException,))
+    def get_task_info(self, task_gid: str) -> Optional[Dict]:
+        try:
+            url = f"{self.base_url}/tasks/{task_gid}"
+            params = {"opt_fields": "completed,name"}
+            response = requests.get(url, headers=self.headers, params=params, timeout=10)
+            response.raise_for_status()
+            return response.json().get('data')
+        except Exception as e:
+            logger.warning(f"Failed to get task info: {str(e)}")
+            return None
     
     def get_section_gid(self, section_name: str) -> Optional[str]:
         try:

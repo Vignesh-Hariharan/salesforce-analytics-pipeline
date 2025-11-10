@@ -1,5 +1,7 @@
 .env
+.env.docker
 !.env.example
+!.env.docker.example
 *.pyc
 __pycache__/
 *.log
@@ -10,4 +12,6 @@ outputs/charts/*.png
 .idea/
 venv/
 env/
+ASANA_USAGE_GUIDE.md
+HOW_TO_REQUEST_ANALYSIS.md
 

@@ -27,8 +27,11 @@ GEMINI_API_KEY = get_required_env('GEMINI_API_KEY')
 
 SLACK_WEBHOOK_URL = get_required_env('SLACK_WEBHOOK_URL')
 
-ASANA_ACCESS_TOKEN = get_required_env('ASANA_ACCESS_TOKEN')
-ASANA_PROJECT_GID = get_required_env('ASANA_PROJECT_GID')
+ASANA_ACCESS_TOKEN = os.getenv('ASANA_ACCESS_TOKEN')
+ASANA_PROJECT_GID = os.getenv('ASANA_PROJECT_GID')
+
+def is_asana_configured() -> bool:
+    return bool(ASANA_ACCESS_TOKEN and ASANA_PROJECT_GID)
 
 OUTPUT_DIR = Path(__file__).parent.parent.parent / 'outputs' / 'charts'
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
