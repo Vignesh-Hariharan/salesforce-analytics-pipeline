@@ -15,16 +15,21 @@ class SlackClient:
     @retry_on_failure(max_attempts=3, delay=2.0, exceptions=(requests.RequestException,))
     def send_notification(self, workflow_type: str, metrics: Dict, insights: str, 
                          asana_task_url: Optional[str] = None, 
-                         image_urls: Optional[list] = None) -> bool:
+                         image_urls: Optional[list] = None,
+                         asana_note: Optional[str] = None) -> bool:
         try:
             start_time = time.time()
             
             insights_list = self._parse_insights(insights)
-            blocks = self._build_blocks(workflow_type, metrics, insights_list, asana_task_url, image_urls)
+            blocks = self._build_blocks(workflow_type, metrics, insights_list, asana_task_url, image_urls, asana_note)
             
             payload = {
                 "blocks": blocks
             }
+            
+            logger.info(f"Sending {len(blocks)} blocks to Slack")
+            if image_urls:
+                logger.info(f"Including {len(image_urls)} images")
             
             response = requests.post(
                 self.webhook_url,
@@ -32,6 +37,12 @@ class SlackClient:
                 headers={'Content-Type': 'application/json'},
                 timeout=10
             )
+            
+            if response.status_code != 200:
+                logger.error(f"Slack error: {response.text}")
+                logger.error(f"First image URL: {image_urls[0] if image_urls else 'None'}")
+                # Try without images
+                raise Exception(f"Slack rejected blocks: {response.text}")
             
             response.raise_for_status()
             
@@ -51,6 +62,8 @@ class SlackClient:
         
         for line in lines:
             line = line.strip()
+            # Escape special markdown characters that break Slack blocks
+            line = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
             if line.startswith('Finding:'):
                 if current_insight:
                     insights_list.append('\n'.join(current_insight))
@@ -65,11 +78,12 @@ class SlackClient:
     
     def _build_blocks(self, workflow_type: str, metrics: Dict, insights_list: list, 
                      asana_task_url: Optional[str] = None,
-                     image_urls: Optional[list] = None) -> list:
+                     image_urls: Optional[list] = None,
+                     asana_note: Optional[str] = None) -> list:
         workflow_titles = {
-            'sales-pipeline-health': '📊 Pipeline Health Report',
-            'rep-performance': '👥 Sales Rep Performance Report',
-            'revenue-forecast': '💰 Revenue Forecast Report'
+            'sales-pipeline-health': 'Pipeline Health Report',
+            'rep-performance': 'Sales Rep Performance Report',
+            'revenue-forecast': 'Revenue Forecast Report'
         }
         
         title = workflow_titles.get(workflow_type, 'Analytics Report')
@@ -91,6 +105,17 @@ class SlackClient:
             }
         ]
         
+        if asana_note:
+            blocks.append({
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": asana_note
+                    }
+                ]
+            })
+        
         if asana_task_url:
             blocks.append({
                 "type": "actions",
@@ -108,34 +133,29 @@ class SlackClient:
             })
         
         if image_urls and insights_list:
-            chart_descriptions = self._get_chart_descriptions(workflow_type)
+            blocks.append({"type": "divider"})
             
-            for i, url in enumerate(image_urls):
-                blocks.append({"type": "divider"})
-                
-                if i < len(insights_list):
+            chart_descs = self._get_chart_descriptions(workflow_type)
+            
+            for i, (insight, url) in enumerate(zip(insights_list, image_urls)):
+                if i < len(chart_descs):
+                    chart_info = chart_descs[i]
                     blocks.append({
                         "type": "section",
                         "text": {
                             "type": "mrkdwn",
-                            "text": f"*📊 Analysis {i+1}*\n{insights_list[i]}"
-                        }
-                    })
-                
-                if i < len(chart_descriptions):
-                    blocks.append({
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": f"*{chart_descriptions[i]['title']}*\n_{chart_descriptions[i]['desc']}_"
+                            "text": f"*{chart_info['title']}*\n{insight}"
                         }
                     })
                 
                 blocks.append({
                     "type": "image",
                     "image_url": url,
-                    "alt_text": chart_descriptions[i]['title'] if i < len(chart_descriptions) else "Chart"
+                    "alt_text": chart_info['title'] if i < len(chart_descs) else "Chart"
                 })
+                
+                if i < len(insights_list) - 1:
+                    blocks.append({"type": "divider"})
         
         return blocks
     

@@ -21,13 +21,21 @@ def run_workflow(run_id: str) -> Dict:
     start_time = datetime.now()
     
     sf_client = SalesforceClient()
-    sf_client = SalesforceClient()
     snow_client = SnowflakeClient()
     
     try:
         opportunities = sf_client.get_opportunities(days=90)
         if not opportunities:
+            logger.warning("No opportunities found in Salesforce for the last 90 days")
             raise ValueError("No opportunities found in Salesforce")
+        
+        valid_opps = [o for o in opportunities if o.get('opportunity_id') and o.get('opportunity_name')]
+        if len(valid_opps) < len(opportunities):
+            logger.warning(f"Filtered out {len(opportunities) - len(valid_opps)} invalid opportunities")
+        opportunities = valid_opps
+        
+        if not opportunities:
+            raise ValueError("No valid opportunities found after data validation")
         
         opp_ids = [o['opportunity_id'] for o in opportunities]
         activities = sf_client.get_activities(opp_ids)
@@ -175,11 +183,12 @@ def generate_charts(snow_client: SnowflakeClient) -> List[Path]:
     df_stages = pd.DataFrame(stage_data)
     
     if not df_stages.empty:
-        plt.figure(figsize=(10, 6))
-        plt.barh(df_stages['STAGE_NAME'], df_stages['COUNT'], color='steelblue')
-        plt.xlabel('Number of Opportunities')
-        plt.ylabel('Stage')
+        plt.figure(figsize=(8, 5))
+        plt.bar(df_stages['STAGE_NAME'], df_stages['COUNT'], color='steelblue', width=0.6)
+        plt.ylabel('Number of Opportunities')
+        plt.xlabel('Stage')
         plt.title('Opportunities by Stage')
+        plt.xticks(rotation=45, ha='right')
         plt.tight_layout()
         path = settings.OUTPUT_DIR / f'pipeline_health_stages_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png'
         plt.savefig(path, dpi=100, bbox_inches='tight')
@@ -195,16 +204,13 @@ def generate_charts(snow_client: SnowflakeClient) -> List[Path]:
     ]
     df_conv = pd.DataFrame(conversion_data)
     
-    plt.figure(figsize=(10, 6))
-    bars = plt.bar(df_conv['stage'], df_conv['conversion'], color='coral')
-    plt.xlabel('Stage')
+    plt.figure(figsize=(8, 5))
+    plt.bar(df_conv['stage'], df_conv['conversion'], color='coral', width=0.6)
     plt.ylabel('Conversion Rate (%)')
+    plt.xlabel('Stage')
     plt.title('Stage Conversion Rates')
-    plt.ylim(0, 100)
-    for bar in bars:
-        height = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2., height,
-                f'{height:.0f}%', ha='center', va='bottom')
+    plt.ylim(0, 110)
+    plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
     path = settings.OUTPUT_DIR / f'pipeline_health_conversions_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png'
     plt.savefig(path, dpi=100, bbox_inches='tight')

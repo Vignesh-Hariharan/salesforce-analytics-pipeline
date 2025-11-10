@@ -1,143 +1,102 @@
 # Salesforce Opportunity Analytics Pipeline
 
-Automated pipeline that pulls Salesforce opportunity data, runs analysis, generates charts, and uses Gemini AI to produce insights. Built to demonstrate practical data engineering with real API integrations.
+Automated pipeline that pulls Salesforce opportunity data, generates charts, and uses Gemini AI to produce insights. Orchestrated by Kestra, triggered by Asana tasks.
 
-## What This Does
+## What It Does
 
-You create an Asana task with a specific tag (like `sales-pipeline-health`), and the system:
-1. Detects the task (polls Asana every 6 hours, or trigger manually)
-2. Extracts opportunities and activities from Salesforce sandbox
-3. Loads data into Snowflake tables
-4. Calculates metrics and generates 4 matplotlib charts
-5. Sends charts + data to Gemini for multimodal AI analysis
-6. Posts results to Slack
-7. Attaches charts to Asana task, adds AI insights as comment, marks complete
+Create an Asana task with a specific tag, and the system:
+1. Polls Asana every 6 hours (or trigger manually via Kestra UI)
+2. Extracts opportunities and activities from Salesforce
+3. Loads data into Snowflake
+4. Calculates metrics and generates 4 charts (matplotlib)
+5. Sends charts + data to Gemini for AI analysis
+6. Posts results to Slack with embedded images
+7. Uploads charts to Asana task, adds AI insights, marks complete
 
-Three different analysis types available based on Asana tag.
-
-## Architecture
-
-```
-Asana Task Created (manual)
-    ↓
-Kestra Poller (every 6 hours or manual trigger)
-    ↓
-Python: Extract from Salesforce API
-    ↓
-Snowflake: Load to fact_opportunities, dim_activities
-    ↓
-Python: Calculate metrics, generate charts
-    ↓
-Gemini: Analyze data + chart images, generate insights
-    ↓
-Slack: Send notification
-    ↓
-Asana: Upload charts, add comment, mark complete
-```
-
-Everything runs locally in Docker. Python does the heavy lifting, Kestra orchestrates.
+Three analysis types available, triggered by different Asana tags.
 
 ## Workflows
 
-### 1. Pipeline Health (`sales-pipeline-health` tag)
-Analyzes where deals are stuck in the pipeline.
-- Opportunities by stage
-- Stage conversion rates
-- Time spent in each stage
-- Weekly trends
+**Pipeline Health** (`sales-pipeline-health`)
+- Distribution by stage, conversion rates, time in stage, weekly trends
+- Use for identifying bottlenecks
 
-### 2. Rep Performance (`rep-performance` tag)
-Compares sales rep effectiveness.
-- Close rates by rep
-- Average deal sizes
-- Activity correlation (more calls = more wins?)
-- Won vs lost activity patterns
+**Rep Performance** (`rep-performance`)  
+- Close rates, deal sizes, activity patterns by rep
+- Use for coaching and reviews
 
-### 3. Revenue Forecast (`revenue-forecast` tag)
-Projects revenue based on current pipeline.
-- Total pipeline value
-- Weighted forecast (applies probability by stage)
-- Historical revenue trends
-- At-risk deals (stalled >90 days)
+**Revenue Forecast** (`revenue-forecast`)
+- Pipeline value, weighted forecast, at-risk analysis
+- Use for board meetings and planning
 
-## Setup Instructions
+## Tech Stack
+
+- **Kestra**: Workflow orchestration (Docker)
+- **Python**: Data extraction, transformation, chart generation
+- **Salesforce API**: Source data (opportunities + tasks)
+- **Snowflake**: Data warehouse
+- **Gemini 2.0 Flash**: Multimodal AI (text + image analysis)
+- **Slack**: Notifications via webhook
+- **Asana**: Request management and results delivery
+- **Imgur**: Chart hosting for Slack
+
+## Setup
 
 ### Prerequisites
+- Docker Desktop
+- Salesforce account (sandbox or developer edition)
+- Snowflake account
+- Google Gemini API key
+- Slack webhook URL
+- Asana account with PAT
 
-- Docker Desktop installed and running
-- Python 3.9+ (for local testing)
-- Accounts: Salesforce sandbox, Snowflake, Gemini API, Slack, Asana
+### 1. Clone and Configure
 
-### 1. Snowflake Setup
-
-Run the SQL in `sql/setup_snowflake.sql` to create:
-- Database: SALES_ANALYTICS
-- Schema: OPPORTUNITIES
-- Warehouse: COMPUTE_WH (X-Small, auto-suspend after 60s)
-- Tables: fact_opportunities, dim_activities, pipeline_runs
-
-Note: Make sure your Snowflake user has CREATE permissions on database/schema/warehouse.
-
-### 2. Salesforce Connected App
-
-Login to your sandbox:
-1. Setup → Apps → App Manager → New Connected App
-2. Enable OAuth Settings
-3. Callback URL: `https://login.salesforce.com/` (placeholder, not used)
-4. Selected OAuth Scopes: Full access (api), Perform requests on your behalf (refresh_token)
-5. Save and copy Consumer Key + Consumer Secret
-
-Wait 10 minutes for Salesforce to activate it (seriously, it's slow).
-
-Alternatively, use username/password/security token method:
-- Go to Settings → Reset My Security Token
-- Check email for token
-- Token gets appended to password when authenticating
-
-### 3. Get API Keys
-
-**Gemini:**
-- Visit https://aistudio.google.com/app/apikey
-- Create API key (free tier: 60 requests/minute)
-- Copy key
-
-**Slack:**
-- Create incoming webhook: https://api.slack.com/messaging/webhooks
-- Choose channel, get webhook URL
-
-**Asana:**
-- Go to https://app.asana.com/0/my-apps
-- Create Personal Access Token
-- Copy token
-- Find your project GID: Open project in browser, GID is in URL after `/project/`
-
-### 4. Configure Environment
-
-Copy `.env.example` to `.env`:
 ```bash
+git clone <repo-url>
+cd "Salesforce Opportunities Analytics Pipeline"
 cp .env.example .env
 ```
 
-Fill in your actual credentials in `.env`. Double-check these, common issues:
-- Snowflake account identifier is usually like `XXXXX-XXXXX` not the full URL
-- Salesforce security token goes separate from password
-- Asana project GID is just the number, not full URL
-
-### 5. Install Python Dependencies
-
+Edit `.env` with your credentials:
 ```bash
-cd python
-pip install -r requirements.txt
+# Snowflake
+SNOWFLAKE_ACCOUNT=your-account-id
+SNOWFLAKE_USER=your-username
+SNOWFLAKE_PASSWORD=your-password
+SNOWFLAKE_DATABASE=SALES_ANALYTICS
+SNOWFLAKE_SCHEMA=OPPORTUNITIES
+SNOWFLAKE_WAREHOUSE=COMPUTE_WH
+
+# Salesforce
+SALESFORCE_USERNAME=your-email
+SALESFORCE_PASSWORD=your-password
+SALESFORCE_SECURITY_TOKEN=your-token
+SALESFORCE_DOMAIN=login  # or 'test' for sandbox
+
+# Gemini
+GEMINI_API_KEY=your-api-key
+
+# Slack
+SLACK_WEBHOOK_URL=your-webhook-url
+
+# Asana
+ASANA_ACCESS_TOKEN=your-token
+ASANA_PROJECT_GID=your-project-id
 ```
 
-Test Snowflake connection:
-```bash
-python -c "from clients.snowflake_client import SnowflakeClient; c = SnowflakeClient(); print('Connected')"
-```
+### 2. Setup Snowflake
 
-If that works, you're good.
+Run `sql/setup_snowflake.sql` in Snowflake UI to create database, schema, and tables.
 
-### 6. Start Kestra
+### 3. Setup Asana
+
+Create three tags in your Asana project:
+- `sales-pipeline-health`
+- `rep-performance`
+- `revenue-forecast`
+
+### 4. Start Kestra
 
 ```bash
 cd docker
@@ -146,193 +105,155 @@ docker-compose up -d
 
 Wait 30 seconds, then open http://localhost:8080
 
-First time takes a while to download images (~2GB).
+### 5. Upload Workflows
 
-### 7. Add Secrets to Kestra
+In Kestra UI, create these flows under namespace `salesforce.analytics`:
+- `kestra/flows/asana-poller.yml`
+- `kestra/flows/manual-trigger-workflow.yml`
+- `kestra/flows/pipeline-health-workflow.yml`
+- `kestra/flows/rep-performance-workflow.yml`
+- `kestra/flows/revenue-forecast-workflow.yml`
 
-In Kestra UI:
-- Go to Namespaces → salesforce.analytics (create if doesn't exist)
-- Click Secrets tab
-- Add each credential from your .env file:
-  - SNOWFLAKE_ACCOUNT
-  - SNOWFLAKE_USER
-  - SNOWFLAKE_PASSWORD
-  - SALESFORCE_USERNAME
-  - SALESFORCE_PASSWORD
-  - SALESFORCE_SECURITY_TOKEN
-  - GEMINI_API_KEY
-  - SLACK_WEBHOOK_URL
-  - ASANA_ACCESS_TOKEN
-  - ASANA_PROJECT_GID
+## Usage
 
-Secrets are encrypted at rest.
+### Automated (Production)
 
-### 8. Upload Workflows to Kestra
+1. Create an Asana task in your project
+2. Add one of the three tags
+3. Leave it incomplete
+4. Wait for next polling cycle (every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC)
+5. Results posted to Asana + Slack
 
-In Kestra UI:
-- Flows → Create
-- Copy paste content from each YAML in `kestra/flows/`
-- Upload all 4 files:
-  - asana-poller.yml
-  - pipeline-health-workflow.yml
-  - rep-performance-workflow.yml
-  - revenue-forecast-workflow.yml
+### Manual Trigger (Testing)
 
-Save each one. They should appear in the Flows list.
-
-## Running It
-
-### Manual Trigger (Recommended for Testing)
-
-1. Create Asana task in your project
-2. Add tag: `sales-pipeline-health` (or `rep-performance` or `revenue-forecast`)
-3. Keep task incomplete
-4. In Kestra UI, go to Flows → asana-poller
-5. Click Execute button (top right)
-6. Watch logs
-
-It should:
-- Find your task
-- Trigger the appropriate workflow
-- Run Python script
-- Upload charts to Asana
-- Send Slack notification
-- Mark task complete
-
-Check Asana task for charts and AI insights in comments.
-
-### Scheduled Polling
-
-Poller runs automatically every 6 hours: 12am, 6am, 12pm, 6pm.
-
-Only works if Docker is running. If your laptop sleeps, schedule pauses.
-
-To disable schedule: Edit asana-poller.yml, set `disabled: true` under triggers.
-
-## Troubleshooting
-
-**Docker containers won't start:**
-- Check Docker Desktop is running
-- Try `docker-compose down` then `docker-compose up -d`
-- Check ports 8080/8081 aren't used by something else
-
-**Kestra can't find Python scripts:**
-- Volume mounts in docker-compose.yml need absolute paths
-- Check the volumes section references your actual directories
-
-**Salesforce API errors:**
-- Verify security token is current (resets when password changes)
-- Check your sandbox is active (sandboxes can expire)
-- API limits: 15k calls/day on most sandboxes
-
-**Snowflake connection timeout:**
-- Account identifier format: remove `https://` and `.snowflakecomputing.com`
-- Just use the part like `ABC12345-XY67890`
-- Warehouse must be running (auto-resume should handle this)
-
-**Gemini API quota exceeded:**
-- Free tier: 60 requests/minute
-- Each workflow uses 1 request
-- Wait a minute and retry
-
-**Charts not generating:**
-- Check outputs/charts/ folder exists
-- matplotlib needs write permissions
-- Running in Docker might have path issues (check OUTPUT_DIR in settings.py)
-
-**Asana task not found:**
-- Project GID must be correct
-- Task must have exact tag name (case-sensitive)
-- Task must be incomplete
-
-## Tech Stack
-
-- **Orchestration:** Kestra (workflow scheduling, retry logic)
-- **Data Extraction:** Salesforce API (simple-salesforce)
-- **Data Warehouse:** Snowflake (idempotent MERGE statements)
-- **Visualization:** Matplotlib (4 charts per workflow)
-- **AI Analysis:** Google Gemini 1.5 Pro (multimodal: text + images)
-- **Notifications:** Slack (webhooks), Asana (REST API)
-- **Language:** Python 3.11
-- **Infrastructure:** Docker Compose
+1. Go to Kestra UI
+2. Find `manual-trigger-workflow`
+3. Click Execute
+4. Select workflow type from dropdown
+5. (Optional) Provide Asana task GID and URL
+6. Run
 
 ## Project Structure
 
 ```
+.
 ├── docker/
-│   └── docker-compose.yml          # Kestra setup
-├── kestra/
-│   └── flows/                      # Workflow definitions (YAML)
+│   └── docker-compose.yml       # Kestra + Postgres
+├── kestra/flows/
+│   ├── asana-poller.yml         # Polls Asana every 6h
+│   ├── manual-trigger-workflow.yml
+│   └── *-workflow.yml           # 3 analysis workflows
 ├── python/
-│   ├── clients/                    # API clients (5 files)
-│   ├── config/                     # Settings, prompts
-│   ├── workflows/                  # Core logic for each analysis
-│   ├── utils/                      # Logging, error handling
-│   ├── main.py                     # Entry point Kestra calls
-│   └── requirements.txt
+│   ├── clients/                 # API integrations
+│   │   ├── salesforce_client.py
+│   │   ├── snowflake_client.py
+│   │   ├── gemini_client.py
+│   │   ├── slack_client.py
+│   │   ├── asana_client.py
+│   │   └── image_host_client.py
+│   ├── workflows/               # Analysis logic
+│   │   ├── pipeline_health.py
+│   │   ├── rep_performance.py
+│   │   └── revenue_forecast.py
+│   ├── config/
+│   │   ├── settings.py
+│   │   └── prompts.py
+│   ├── utils/
+│   └── main.py
 ├── sql/
-│   └── setup_snowflake.sql         # Database setup
-├── outputs/
-│   └── charts/                     # Generated PNG files
-└── README.md
+│   └── setup_snowflake.sql
+└── outputs/charts/              # Generated PNGs
 ```
 
-## Quick Test
+## Data Model
 
-After setup, test individual connections:
+**fact_opportunities**
+- Opportunity details (ID, name, amount, stage, dates, owner)
+- Pre-calculated fields (days_open, days_to_close, total_activities)
+
+**dim_activities**
+- Tasks linked to opportunities
+- Activity type, date, owner
+
+**pipeline_runs**
+- Audit log of workflow executions
+- Tracks status, records processed, Gemini cost
+
+## AI Analysis
+
+Gemini receives:
+- Text prompt with metrics and data summary
+- 4 chart images (multimodal input)
+- Temperature: 0.3 (consistent output)
+- Max tokens: 800
+
+Outputs 4 insights in format:
+```
+Finding: [Observation from chart]
+Impact: [Business consequence]
+Action: [Specific next step]
+```
+
+Cost: ~$0.01 per run (Gemini 2.0 Flash pricing)
+
+## Development
+
+### Run Python Locally
 
 ```bash
 cd python
-
-# Test Salesforce
-python -c "from clients.salesforce_client import SalesforceClient; c = SalesforceClient(); print('Salesforce OK')"
-
-# Test Snowflake
-python -c "from clients.snowflake_client import SnowflakeClient; c = SnowflakeClient(); print('Snowflake OK'); c.close()"
-
-# Test full workflow
+pip install -r requirements.txt
 python main.py sales-pipeline-health
 ```
 
-Should generate 4 charts in `outputs/charts/` and send Slack notification.
+### Test Individual Components
 
-## Cost Estimate
+```python
+from clients.salesforce_client import SalesforceClient
 
-Running locally for demo purposes:
-- Snowflake: ~$2-5/month (X-Small warehouse, minimal usage)
-- Gemini API: ~$1-2/month (120 calls at ~$0.01 each)
-- Salesforce: Free (sandbox)
-- Slack/Asana: Free (webhook/API)
+sf = SalesforceClient()
+opps = sf.get_opportunities(days=90)
+print(f"Extracted {len(opps)} opportunities")
+```
 
-Total: ~$3-7/month if running scheduled. $0 if just doing manual demos.
+### View Logs
 
-Docker and Python run on your laptop (free).
+```bash
+docker logs docker-kestra-1 -f
+```
 
-## Development Notes
+## Troubleshooting
 
-**Why Kestra?**
-Needed an orchestrator that's not Airflow (too heavy) or cron (too basic). Kestra has nice UI, handles retries, logs everything.
+**Kestra not starting?**
+- Check Docker Desktop is running
+- View logs: `docker logs docker-kestra-1`
+- Ensure ports 8080/8081 are free
 
-**Why multimodal Gemini?**
-Sending charts as images lets AI see patterns humans see. More interesting than just text prompts. Gemini 1.5 Pro handles this well.
+**Salesforce auth failing?**
+- Verify username/password/token in `.env`
+- Use `login` domain for production, `test` for sandbox
+- Reset security token if needed
 
-**Why three workflows?**
-Shows modularity. Easy to add more by copying pattern. Each answers a different business question.
+**No images in Slack?**
+- Imgur upload might fail (temporary)
+- Charts still uploaded to Asana
+- Slack gets text-only notification
 
-**Data quality issues:**
-- Some Salesforce fields might be null (handled with .get() defaults)
-- Conversion rate chart uses sample data (real version needs stage history tracking)
-- Activity counts might be off if Tasks aren't logged consistently
+**Task not processed?**
+- Verify task is in correct Asana project
+- Check tag spelling (lowercase, exact match)
+- Ensure task is incomplete
+- Wait for next 6-hour cycle or trigger manually
 
-**Improvements for production:**
-- Add dbt for transformations
-- Use Kestra's built-in secrets instead of .env in Docker
-- Set up proper monitoring/alerting
-- Add data quality checks
-- Handle more Salesforce edge cases (person accounts, etc)
-- Better error messages to Asana when things fail
+## Notes
+
+- Uses Salesforce sandbox data (last 90 days)
+- Snowflake X-Small warehouse (auto-suspend after 60s)
+- Gemini API has free tier (15 req/min)
+- Asana API: 150 req/min limit
+- All credentials stored in `.env` (not committed)
+- Charts auto-deleted after 7 days
 
 ## License
 
 MIT
-

@@ -27,7 +27,16 @@ def run_workflow(run_id: str) -> Dict:
     try:
         opportunities = sf_client.get_opportunities(days=90)
         if not opportunities:
+            logger.warning("No opportunities found in Salesforce for the last 90 days")
             raise ValueError("No opportunities found in Salesforce")
+        
+        valid_opps = [o for o in opportunities if o.get('opportunity_id') and o.get('opportunity_name')]
+        if len(valid_opps) < len(opportunities):
+            logger.warning(f"Filtered out {len(opportunities) - len(valid_opps)} invalid opportunities")
+        opportunities = valid_opps
+        
+        if not opportunities:
+            raise ValueError("No valid opportunities found after data validation")
         
         opp_ids = [o['opportunity_id'] for o in opportunities]
         activities = sf_client.get_activities(opp_ids)
@@ -198,12 +207,13 @@ def generate_charts(snow_client: SnowflakeClient) -> List[Path]:
         
         df_reps = pd.DataFrame(rep_data)
         
-        plt.figure(figsize=(10, 6))
-        plt.barh(df_reps['OWNER_NAME'], df_reps['close_rate'], color='steelblue')
-        plt.xlabel('Close Rate (%)')
-        plt.ylabel('Sales Rep')
+        plt.figure(figsize=(8, 5))
+        plt.bar(df_reps['OWNER_NAME'], df_reps['close_rate'], color='steelblue', width=0.6)
+        plt.ylabel('Close Rate (%)')
+        plt.xlabel('Sales Rep')
         plt.title('Close Rate by Rep')
-        plt.xlim(0, 100)
+        plt.ylim(0, 110)
+        plt.xticks(rotation=45, ha='right')
         plt.tight_layout()
         path = settings.OUTPUT_DIR / f'rep_performance_close_rate_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png'
         plt.savefig(path, dpi=100, bbox_inches='tight')
@@ -227,11 +237,12 @@ def generate_charts(snow_client: SnowflakeClient) -> List[Path]:
     if deal_data:
         df_deals = pd.DataFrame(deal_data)
         
-        plt.figure(figsize=(10, 6))
-        plt.barh(df_deals['OWNER_NAME'], df_deals['AVG_DEAL_SIZE'], color='coral')
-        plt.xlabel('Average Deal Size ($)')
-        plt.ylabel('Sales Rep')
+        plt.figure(figsize=(8, 5))
+        plt.bar(df_deals['OWNER_NAME'], df_deals['AVG_DEAL_SIZE'], color='coral', width=0.6)
+        plt.ylabel('Average Deal Size ($)')
+        plt.xlabel('Sales Rep')
         plt.title('Average Deal Size by Rep')
+        plt.xticks(rotation=45, ha='right')
         plt.tight_layout()
         path = settings.OUTPUT_DIR / f'rep_performance_deal_size_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png'
         plt.savefig(path, dpi=100, bbox_inches='tight')
