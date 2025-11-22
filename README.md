@@ -25,7 +25,7 @@ Create a task in Asana and tag it with one of the three workflow tags to trigger
 ### Workflow Execution & Slack Notification
 Kestra orchestrates the workflow and sends results to Slack with embedded charts:
 
-![Kestra Workflow and Slack](docs/images/kestra-workflow-slack.gif)
+<img src="docs/images/kestra-workflow-slack.gif" alt="Kestra Workflow and Slack" width="900"/>
 
 ### Completed Asana Task
 The task is automatically marked complete with charts attached and AI insights added as comments:
