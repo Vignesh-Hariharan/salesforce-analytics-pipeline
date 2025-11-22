@@ -15,6 +15,23 @@ Create an Asana task with a specific tag, and the system:
 
 Three analysis types available, triggered by different Asana tags.
 
+## Demo
+
+### Creating an Asana Task
+Create a task in Asana and tag it with one of the three workflow tags to trigger analysis:
+
+![Asana Task Creation](docs/images/asana-task-creation.gif)
+
+### Workflow Execution & Slack Notification
+Kestra orchestrates the workflow and sends results to Slack with embedded charts:
+
+![Kestra Workflow and Slack](docs/images/kestra-workflow-slack.gif)
+
+### Completed Asana Task
+The task is automatically marked complete with charts attached and AI insights added as comments:
+
+![Asana Completed Task](docs/images/asana-completed-task.png)
+
 ## Workflows
 
 **Pipeline Health** (`sales-pipeline-health`)
@@ -119,19 +136,32 @@ In Kestra UI, create these flows under namespace `salesforce.analytics`:
 ### Automated (Production)
 
 1. Create an Asana task in your project
-2. Add one of the three tags
+2. Add one of the three tags (`sales-pipeline-health`, `rep-performance`, or `revenue-forecast`)
 3. Leave it incomplete
 4. Wait for next polling cycle (every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC)
 5. Results posted to Asana + Slack
 
+The system will automatically:
+- Detect the new task with the workflow tag
+- Execute the corresponding analysis workflow
+- Generate 4 charts and AI insights
+- Upload charts to the Asana task
+- Post results to Slack with embedded images
+- Mark the task as complete
+
+See the [Demo](#demo) section above for a visual walkthrough.
+
 ### Manual Trigger (Testing)
 
-1. Go to Kestra UI
-2. Find `manual-trigger-workflow`
-3. Click Execute
-4. Select workflow type from dropdown
-5. (Optional) Provide Asana task GID and URL
-6. Run
+1. Go to Kestra UI (http://localhost:8080)
+2. Navigate to `salesforce.analytics` namespace
+3. Find `manual-trigger-workflow`
+4. Click Execute
+5. Select workflow type from dropdown
+6. (Optional) Provide Asana task GID and URL for task updates
+7. Click Run
+
+Results will be sent to Slack. If you provide a valid Asana task GID, the task will be updated with charts and insights.
 
 ## Project Structure
 
