@@ -30,7 +30,7 @@ Kestra orchestrates the workflow and sends results to Slack with embedded charts
 ### Completed Asana Task
 The task is automatically marked complete with charts attached and AI insights added as comments:
 
-![Asana Completed Task](docs/images/asana-completed-task.png)
+<img src="docs/images/asana-completed-task.png" alt="Asana Completed Task" width="400"/>
 
 ## Workflows
 
