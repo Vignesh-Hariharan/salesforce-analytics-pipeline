@@ -20,7 +20,7 @@ Three analysis types available, triggered by different Asana tags.
 ### Creating an Asana Task
 Create a task in Asana and tag it with one of the three workflow tags to trigger analysis:
 
-![Asana Task Creation](docs/images/asana-task-creation.gif)
+<img src="docs/images/asana-task-creation.gif" alt="Asana Task Creation" width="400"/>
 
 ### Workflow Execution & Slack Notification
 Kestra orchestrates the workflow and sends results to Slack with embedded charts:
