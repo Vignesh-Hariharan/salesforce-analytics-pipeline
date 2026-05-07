@@ -70,8 +70,8 @@ The task is automatically marked complete with charts attached and AI insights a
 ### 1. Clone and Configure
 
 ```bash
-git clone <repo-url>
-cd "Salesforce Opportunities Analytics Pipeline"
+git clone https://github.com/Vignesh-Hariharan/salesforce-analytics-pipeline.git
+cd salesforce-analytics-pipeline
 cp .env.example .env
 ```
 
