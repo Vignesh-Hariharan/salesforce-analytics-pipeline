@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install ruff
+          pip install -r python/requirements.txt
+
+      - name: Lint with ruff
+        run: ruff check python/ --ignore E501
+
+      - name: Validate Python imports
+        run: |
+          python -c "import sys; sys.path.insert(0, 'python'); import clients, utils, workflows; print('All imports OK')"
+        env:
+          PYTHONPATH: python
+
+      - name: Validate Kestra flows are valid YAML
+        run: |
+          python -c "
+          import yaml, os, sys
+          flow_dir = 'kestra/flows'
+          errors = []
+          for f in os.listdir(flow_dir):
+              if f.endswith('.yml') or f.endswith('.yaml'):
+                  try:
+                      with open(os.path.join(flow_dir, f)) as fh:
+                          yaml.safe_load(fh)
+                      print(f'  OK: {f}')
+                  except yaml.YAMLError as e:
+                      errors.append(f'{f}: {e}')
+          if errors:
+              print('YAML errors found:')
+              for e in errors: print(e)
+              sys.exit(1)
+          print(f'All {len(os.listdir(flow_dir))} Kestra flows valid.')
+          "
