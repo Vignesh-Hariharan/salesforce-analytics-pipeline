@@ -196,27 +196,38 @@ def generate_charts(snow_client: SnowflakeClient) -> List[Path]:
         chart_paths.append(path)
         logger.info(f"Chart 1 saved: {path.name}")
     
-    conversion_data = [
-        {'stage': 'Prospecting', 'conversion': 75},
-        {'stage': 'Qualification', 'conversion': 60},
-        {'stage': 'Proposal', 'conversion': 45},
-        {'stage': 'Negotiation', 'conversion': 70}
-    ]
-    df_conv = pd.DataFrame(conversion_data)
-    
-    plt.figure(figsize=(8, 5))
-    plt.bar(df_conv['stage'], df_conv['conversion'], color='coral', width=0.6)
-    plt.ylabel('Conversion Rate (%)')
-    plt.xlabel('Stage')
-    plt.title('Stage Conversion Rates')
-    plt.ylim(0, 110)
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    path = settings.OUTPUT_DIR / f'pipeline_health_conversions_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png'
-    plt.savefig(path, dpi=100, bbox_inches='tight')
-    plt.close()
-    chart_paths.append(path)
-    logger.info(f"Chart 2 saved: {path.name}")
+    funnel_query = """
+        WITH stage_counts AS (
+            SELECT stage_name, COUNT(*) as count
+            FROM fact_opportunities
+            WHERE NOT is_closed
+            GROUP BY stage_name
+        ),
+        peak AS (
+            SELECT MAX(count) as peak_count FROM stage_counts
+        )
+        SELECT s.stage_name, ROUND(s.count * 100.0 / NULLIF(p.peak_count, 0), 1) as conversion_rate
+        FROM stage_counts s
+        CROSS JOIN peak p
+        ORDER BY s.count DESC
+    """
+    funnel_data = snow_client.execute_query(funnel_query)
+    df_conv = pd.DataFrame(funnel_data)
+
+    if not df_conv.empty:
+        plt.figure(figsize=(8, 5))
+        plt.bar(df_conv['STAGE_NAME'], df_conv['CONVERSION_RATE'], color='coral', width=0.6)
+        plt.ylabel('Conversion Rate (%)')
+        plt.xlabel('Stage')
+        plt.title('Stage Conversion Rates')
+        plt.ylim(0, 110)
+        plt.xticks(rotation=45, ha='right')
+        plt.tight_layout()
+        path = settings.OUTPUT_DIR / f'pipeline_health_conversions_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png'
+        plt.savefig(path, dpi=100, bbox_inches='tight')
+        plt.close()
+        chart_paths.append(path)
+        logger.info(f"Chart 2 saved: {path.name}")
     
     time_query = """
         SELECT stage_name, AVG(days_open) as avg_days
@@ -241,28 +252,34 @@ def generate_charts(snow_client: SnowflakeClient) -> List[Path]:
         chart_paths.append(path)
         logger.info(f"Chart 3 saved: {path.name}")
     
-    trend_data = []
-    for i in range(12):
-        week_start = datetime.now() - timedelta(weeks=11-i)
-        trend_data.append({
-            'week': week_start.strftime('%m/%d'),
-            'opportunities': 20 + (i * 2) + (i % 3) * 5
-        })
-    df_trend = pd.DataFrame(trend_data)
-    
-    plt.figure(figsize=(10, 6))
-    plt.plot(df_trend['week'], df_trend['opportunities'], marker='o', linewidth=2, color='seagreen')
-    plt.xlabel('Week')
-    plt.ylabel('Opportunities')
-    plt.title('Weekly Pipeline Trend')
-    plt.xticks(rotation=45, ha='right')
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    path = settings.OUTPUT_DIR / f'pipeline_health_trend_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png'
-    plt.savefig(path, dpi=100, bbox_inches='tight')
-    plt.close()
-    chart_paths.append(path)
-    logger.info(f"Chart 4 saved: {path.name}")
+    trend_query = """
+        SELECT
+            DATE_TRUNC('week', created_date) as week_start,
+            COUNT(*) as opportunities
+        FROM fact_opportunities
+        WHERE created_date >= DATEADD(week, -12, CURRENT_DATE())
+          AND created_date IS NOT NULL
+        GROUP BY week_start
+        ORDER BY week_start
+    """
+    trend_raw = snow_client.execute_query(trend_query)
+    df_trend = pd.DataFrame(trend_raw)
+
+    if not df_trend.empty:
+        df_trend['WEEK_LABEL'] = pd.to_datetime(df_trend['WEEK_START']).dt.strftime('%m/%d')
+        plt.figure(figsize=(10, 6))
+        plt.plot(df_trend['WEEK_LABEL'], df_trend['OPPORTUNITIES'], marker='o', linewidth=2, color='seagreen')
+        plt.xlabel('Week')
+        plt.ylabel('Opportunities')
+        plt.title('Weekly Pipeline Trend')
+        plt.xticks(rotation=45, ha='right')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        path = settings.OUTPUT_DIR / f'pipeline_health_trend_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png'
+        plt.savefig(path, dpi=100, bbox_inches='tight')
+        plt.close()
+        chart_paths.append(path)
+        logger.info(f"Chart 4 saved: {path.name}")
     
     return chart_paths
 

@@ -123,7 +123,7 @@ Error: {str(e)}
 Check Kestra logs for details.
 """
                 asana_client.add_comment(asana_task_gid, error_comment)
-            except:
+            except Exception:
                 logger.error("Failed to update Asana with error message")
         
         raise PipelineException(f"Workflow failed: {str(e)}")
