@@ -278,6 +278,8 @@ docker logs docker-kestra-1 -f
 ## Notes
 
 - Uses Salesforce sandbox data (last 90 days)
+- Imgur hosting is a demo convenience; for real business data, use Slack file
+  upload or presigned S3 URLs instead of a public image host
 - Snowflake X-Small warehouse (auto-suspend after 60s)
 - Gemini API has free tier (15 req/min)
 - Asana API: 150 req/min limit

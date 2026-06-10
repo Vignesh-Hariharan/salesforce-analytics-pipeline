@@ -1,6 +1,7 @@
 import requests
 from pathlib import Path
 from typing import List
+from config import settings
 from utils.logger import setup_logger
 from utils.error_handler import retry_on_failure
 import base64
@@ -9,9 +10,9 @@ logger = setup_logger(__name__)
 
 class ImageHostClient:
     """Upload images to Imgur for Slack compatibility"""
-    
+
     def __init__(self):
-        self.client_id = "546c25a59c58ad7"
+        self.client_id = settings.IMGUR_CLIENT_ID
         self.upload_url = "https://api.imgur.com/3/image"
         logger.info("Initialized Image Host client (Imgur)")
     
