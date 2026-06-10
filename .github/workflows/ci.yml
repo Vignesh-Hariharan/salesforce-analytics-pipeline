@@ -22,7 +22,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install ruff
+          pip install ruff pyyaml
           pip install -r python/requirements.txt
 
       - name: Lint with ruff
