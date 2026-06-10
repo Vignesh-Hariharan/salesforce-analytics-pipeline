@@ -93,9 +93,9 @@ See 4 charts attached above. Each insight below corresponds to one chart.
 Gemini: {result['gemini_stats']['tokens']} tokens (${result['gemini_stats']['cost']:.4f})
 Full report with images sent to Slack.
 """
-                asana_client.add_comment(asana_task_gid, comment)
-                asana_client.move_to_complete(asana_task_gid)
-                logger.info("Asana task updated and marked complete")
+                    asana_client.add_comment(asana_task_gid, comment)
+                    asana_client.move_to_complete(asana_task_gid)
+                    logger.info("Asana task updated and marked complete")
             except Exception as e:
                 logger.warning(f"Failed to update Asana: {str(e)}")
         elif asana_task_gid and not asana_configured:
