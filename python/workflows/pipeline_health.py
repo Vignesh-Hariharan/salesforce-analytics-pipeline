@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List
 from clients.salesforce_client import SalesforceClient
 from clients.snowflake_client import SnowflakeClient
@@ -90,7 +90,7 @@ def run_workflow(run_id: str) -> Dict:
         
         snow_client.close()
         
-        logger.info(f"Pipeline health workflow completed successfully")
+        logger.info("Pipeline health workflow completed successfully")
         
         return {
             'status': 'success',

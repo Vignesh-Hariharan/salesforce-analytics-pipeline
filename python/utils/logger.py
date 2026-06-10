@@ -1,6 +1,5 @@
 import logging
 import sys
-from datetime import datetime
 from typing import Optional
 
 def setup_logger(name: str, log_level: str = "INFO") -> logging.Logger:

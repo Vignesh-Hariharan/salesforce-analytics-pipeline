@@ -91,7 +91,7 @@ def run_workflow(run_id: str) -> Dict:
         
         snow_client.close()
         
-        logger.info(f"Rep performance workflow completed successfully")
+        logger.info("Rep performance workflow completed successfully")
         
         return {
             'status': 'success',

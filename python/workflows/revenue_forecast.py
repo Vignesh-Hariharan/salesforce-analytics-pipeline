@@ -99,7 +99,7 @@ def run_workflow(run_id: str) -> Dict:
         
         snow_client.close()
         
-        logger.info(f"Revenue forecast workflow completed successfully")
+        logger.info("Revenue forecast workflow completed successfully")
         
         return {
             'status': 'success',
@@ -218,7 +218,7 @@ def generate_charts(snow_client: SnowflakeClient, metrics: Dict) -> List[Path]:
     plt.figure(figsize=(10, 6))
     values = [waterfall_data[0][1], waterfall_data[1][1], waterfall_data[2][1]]
     colors = ['steelblue', 'coral', 'seagreen']
-    bars = plt.bar(range(len(waterfall_data)), values, color=colors, alpha=0.7)
+    plt.bar(range(len(waterfall_data)), values, color=colors, alpha=0.7)
     
     for i, (label, value) in enumerate(waterfall_data):
         plt.text(i, value, f'${abs(value):,.0f}', ha='center', va='bottom' if value > 0 else 'top')

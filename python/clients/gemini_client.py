@@ -1,5 +1,5 @@
 import google.generativeai as genai
-from typing import List, Dict, Optional
+from typing import List, Dict
 import time
 from pathlib import Path
 from PIL import Image
