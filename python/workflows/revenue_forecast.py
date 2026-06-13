@@ -11,6 +11,7 @@ from clients.gemini_client import GeminiClient
 from config.prompts import get_prompt
 from config import settings
 from utils.logger import setup_logger
+from workflows._shared import extract_and_load
 
 logger = setup_logger(__name__)
 
@@ -28,52 +29,13 @@ STAGE_WEIGHTS = {
 def run_workflow(run_id: str) -> Dict:
     logger.info(f"Starting revenue forecast workflow: {run_id}")
     start_time = datetime.now()
-    
+
     sf_client = SalesforceClient()
     snow_client = SnowflakeClient()
-    
+
     try:
-        opportunities = sf_client.get_opportunities(days=90)
-        if not opportunities:
-            logger.warning("No opportunities found in Salesforce for the last 90 days")
-            raise ValueError("No opportunities found in Salesforce")
-        
-        valid_opps = [o for o in opportunities if o.get('opportunity_id') and o.get('opportunity_name')]
-        if len(valid_opps) < len(opportunities):
-            logger.warning(f"Filtered out {len(opportunities) - len(valid_opps)} invalid opportunities")
-        opportunities = valid_opps
-        
-        if not opportunities:
-            raise ValueError("No valid opportunities found after data validation")
-        
-        opp_ids = [o['opportunity_id'] for o in opportunities]
-        activities = sf_client.get_activities(opp_ids)
-        
-        activity_counts = {}
-        for act in activities:
-            opp_id = act['opportunity_id']
-            activity_counts[opp_id] = activity_counts.get(opp_id, 0) + 1
-        
-        for opp in opportunities:
-            opp_id = opp['opportunity_id']
-            opp['total_activities'] = activity_counts.get(opp_id, 0)
-            
-            if opp['created_date']:
-                created = pd.to_datetime(opp['created_date'])
-                if opp['close_date']:
-                    closed = pd.to_datetime(opp['close_date'])
-                    opp['days_to_close'] = (closed - created).days
-                    opp['days_open'] = (closed - created).days
-                else:
-                    opp['days_to_close'] = None
-                    opp['days_open'] = (datetime.now() - created).days
-            else:
-                opp['days_to_close'] = None
-                opp['days_open'] = None
-        
-        snow_client.load_opportunities(opportunities)
-        snow_client.load_activities(activities)
-        
+        opportunities = extract_and_load(sf_client, snow_client, days=90)
+
         metrics = calculate_metrics(snow_client)
         
         chart_paths = generate_charts(snow_client, metrics)
