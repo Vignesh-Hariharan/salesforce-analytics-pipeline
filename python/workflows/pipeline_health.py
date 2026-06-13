@@ -1,21 +1,25 @@
-import pandas as pd
-import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
-from pathlib import Path
+
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List
+
+import matplotlib.pyplot as plt
+import pandas as pd
+
+from clients.gemini_client import GeminiClient
 from clients.salesforce_client import SalesforceClient
 from clients.snowflake_client import SnowflakeClient
-from clients.gemini_client import GeminiClient
-from config.prompts import get_prompt
 from config import settings
+from config.prompts import get_prompt
 from utils.logger import setup_logger
-from workflows._shared import extract_and_load
+from workflows._shared import chart_path, extract_and_load
 
 logger = setup_logger(__name__)
 
 WORKFLOW_TYPE = 'sales-pipeline-health'
+
 
 def run_workflow(run_id: str) -> Dict:
     logger.info(f"Starting pipeline health workflow: {run_id}")
@@ -28,32 +32,24 @@ def run_workflow(run_id: str) -> Dict:
         opportunities = extract_and_load(sf_client, snow_client, days=90)
 
         metrics = calculate_metrics(snow_client)
-        
         chart_paths = generate_charts(snow_client)
-        
-        data_summary = build_data_summary(metrics)
-        prompt, temperature = get_prompt(WORKFLOW_TYPE, data_summary)
-        
+
+        prompt, temperature = get_prompt(WORKFLOW_TYPE, build_data_summary(metrics))
         gemini_client = GeminiClient(temperature=temperature)
         insights_result = gemini_client.generate_insights(prompt, chart_paths)
-        
-        end_time = datetime.now()
+
         snow_client.log_pipeline_run(
             run_id=run_id,
             workflow_type=WORKFLOW_TYPE,
             asana_task_id='',
             start_time=start_time,
-            end_time=end_time,
+            end_time=datetime.now(),
             status='success',
             records_processed=len(opportunities),
             gemini_tokens=insights_result['total_tokens'],
-            gemini_cost=insights_result['cost']
+            gemini_cost=insights_result['cost'],
         )
-        
-        snow_client.close()
-        
-        logger.info("Pipeline health workflow completed successfully")
-        
+
         return {
             'status': 'success',
             'workflow_type': WORKFLOW_TYPE,
@@ -62,206 +58,247 @@ def run_workflow(run_id: str) -> Dict:
             'chart_paths': [str(p) for p in chart_paths],
             'gemini_stats': {
                 'tokens': insights_result['total_tokens'],
-                'cost': insights_result['cost']
+                'cost': insights_result['cost'],
             },
-            'records_processed': len(opportunities)
+            'records_processed': len(opportunities),
         }
-        
+
     except Exception as e:
-        logger.error(f"Pipeline health workflow failed: {str(e)}")
-        end_time = datetime.now()
+        logger.error(f"Pipeline health workflow failed: {e}")
         snow_client.log_pipeline_run(
             run_id=run_id,
             workflow_type=WORKFLOW_TYPE,
             asana_task_id='',
             start_time=start_time,
-            end_time=end_time,
+            end_time=datetime.now(),
             status='failed',
             records_processed=0,
-            error_message=str(e)
+            error_message=str(e),
         )
-        snow_client.close()
         raise
+    finally:
+        snow_client.close()
+
 
 def calculate_metrics(snow_client: SnowflakeClient) -> Dict:
-    logger.info("Calculating pipeline health metrics")
-    
-    query = """
-        SELECT 
-            COUNT(*) as total_opportunities,
-            SUM(CASE WHEN is_won THEN 1 ELSE 0 END) as closed_won,
-            SUM(CASE WHEN is_closed AND NOT is_won THEN 1 ELSE 0 END) as closed_lost,
-            AVG(CASE WHEN is_closed THEN days_to_close END) as avg_days_to_close,
-            SUM(CASE WHEN NOT is_closed THEN amount ELSE 0 END) as pipeline_value,
-            AVG(amount) as avg_deal_size
+    summary = snow_client.execute_query("""
+        SELECT
+            COUNT(*)                                             AS total_opportunities,
+            SUM(CASE WHEN is_won THEN 1 ELSE 0 END)              AS closed_won,
+            SUM(CASE WHEN is_closed AND NOT is_won THEN 1 ELSE 0 END) AS closed_lost,
+            AVG(CASE WHEN is_closed THEN days_to_close END)      AS avg_days_to_close,
+            SUM(CASE WHEN NOT is_closed THEN amount ELSE 0 END)  AS pipeline_value,
+            AVG(amount)                                          AS avg_deal_size
         FROM fact_opportunities
-    """
-    result = snow_client.execute_query(query)
-    summary = result[0] if result else {}
-    
-    stage_query = """
-        SELECT 
-            stage_name,
-            COUNT(*) as count,
-            AVG(days_open) as avg_days_in_stage,
-            SUM(amount) as stage_value
+    """)[0]
+
+    stage_breakdown = snow_client.execute_query("""
+        SELECT stage_name,
+               COUNT(*)         AS count,
+               AVG(days_open)   AS avg_days_in_stage,
+               SUM(amount)      AS stage_value
         FROM fact_opportunities
         WHERE NOT is_closed
         GROUP BY stage_name
         ORDER BY count DESC
-    """
-    stage_data = snow_client.execute_query(stage_query)
-    
-    total_opps = summary.get('TOTAL_OPPORTUNITIES', 0)
-    closed_won = summary.get('CLOSED_WON', 0)
-    close_rate = (closed_won / total_opps * 100) if total_opps > 0 else 0
-    
-    metrics = {
-        'total_opportunities': total_opps,
-        'closed_won': closed_won,
-        'closed_lost': summary.get('CLOSED_LOST', 0),
+    """)
+
+    total = summary['TOTAL_OPPORTUNITIES'] or 0
+    won = summary['CLOSED_WON'] or 0
+    close_rate = (won / total * 100) if total else 0.0
+
+    return {
+        'total_opportunities': total,
+        'closed_won': won,
+        'closed_lost': summary['CLOSED_LOST'] or 0,
         'close_rate': close_rate,
-        'avg_days_to_close': summary.get('AVG_DAYS_TO_CLOSE', 0) or 0,
-        'pipeline_value': summary.get('PIPELINE_VALUE', 0) or 0,
-        'avg_deal_size': summary.get('AVG_DEAL_SIZE', 0) or 0,
-        'stage_breakdown': stage_data
+        'avg_days_to_close': summary['AVG_DAYS_TO_CLOSE'] or 0,
+        'pipeline_value': summary['PIPELINE_VALUE'] or 0,
+        'avg_deal_size': summary['AVG_DEAL_SIZE'] or 0,
+        'stage_breakdown': stage_breakdown,
     }
-    
-    logger.info(f"Calculated metrics: {total_opps} opps, {close_rate:.1f}% close rate")
-    return metrics
+
 
 def generate_charts(snow_client: SnowflakeClient) -> List[Path]:
-    logger.info("Generating pipeline health charts")
-    chart_paths = []
-    
-    stage_query = """
-        SELECT stage_name, COUNT(*) as count
+    out = settings.OUTPUT_DIR
+    paths: List[Path] = []
+
+    paths.extend(_chart_stage_distribution(snow_client, out))
+    paths.extend(_chart_stage_conversion(snow_client, out))
+    paths.extend(_chart_time_in_stage(snow_client, out))
+    paths.extend(_chart_weekly_trend(snow_client, out))
+
+    return paths
+
+
+def _chart_stage_distribution(snow_client: SnowflakeClient, out: Path) -> List[Path]:
+    rows = snow_client.execute_query("""
+        SELECT stage_name, COUNT(*) AS count
         FROM fact_opportunities
         WHERE NOT is_closed
         GROUP BY stage_name
         ORDER BY count DESC
-    """
-    stage_data = snow_client.execute_query(stage_query)
-    df_stages = pd.DataFrame(stage_data)
-    
-    if not df_stages.empty:
-        plt.figure(figsize=(8, 5))
-        plt.bar(df_stages['STAGE_NAME'], df_stages['COUNT'], color='steelblue', width=0.6)
-        plt.ylabel('Number of Opportunities')
-        plt.xlabel('Stage')
-        plt.title('Opportunities by Stage')
-        plt.xticks(rotation=45, ha='right')
-        plt.tight_layout()
-        path = settings.OUTPUT_DIR / f'pipeline_health_stages_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png'
-        plt.savefig(path, dpi=100, bbox_inches='tight')
-        plt.close()
-        chart_paths.append(path)
-        logger.info(f"Chart 1 saved: {path.name}")
-    
-    funnel_query = """
-        WITH stage_counts AS (
-            SELECT stage_name, COUNT(*) as count
-            FROM fact_opportunities
-            WHERE NOT is_closed
-            GROUP BY stage_name
-        ),
-        peak AS (
-            SELECT MAX(count) as peak_count FROM stage_counts
-        )
-        SELECT s.stage_name, ROUND(s.count * 100.0 / NULLIF(p.peak_count, 0), 1) as conversion_rate
-        FROM stage_counts s
-        CROSS JOIN peak p
-        ORDER BY s.count DESC
-    """
-    funnel_data = snow_client.execute_query(funnel_query)
-    df_conv = pd.DataFrame(funnel_data)
+    """)
+    if not rows:
+        return []
+    df = pd.DataFrame(rows)
 
-    if not df_conv.empty:
-        plt.figure(figsize=(8, 5))
-        plt.bar(df_conv['STAGE_NAME'], df_conv['CONVERSION_RATE'], color='coral', width=0.6)
-        plt.ylabel('Conversion Rate (%)')
-        plt.xlabel('Stage')
-        plt.title('Stage Conversion Rates')
-        plt.ylim(0, 110)
-        plt.xticks(rotation=45, ha='right')
-        plt.tight_layout()
-        path = settings.OUTPUT_DIR / f'pipeline_health_conversions_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png'
-        plt.savefig(path, dpi=100, bbox_inches='tight')
-        plt.close()
-        chart_paths.append(path)
-        logger.info(f"Chart 2 saved: {path.name}")
-    
-    time_query = """
-        SELECT stage_name, AVG(days_open) as avg_days
-        FROM fact_opportunities
-        WHERE NOT is_closed AND days_open IS NOT NULL
-        GROUP BY stage_name
+    plt.figure(figsize=(8, 5))
+    plt.bar(df['STAGE_NAME'], df['COUNT'], color='steelblue', width=0.6)
+    plt.ylabel('Open opportunities')
+    plt.xlabel('Stage')
+    plt.title('Open opportunities by stage')
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    path = chart_path('pipeline_health_stages', out)
+    plt.savefig(path, dpi=100, bbox_inches='tight')
+    plt.close()
+    return [path]
+
+
+def _chart_stage_conversion(snow_client: SnowflakeClient, out: Path) -> List[Path]:
+    """True funnel conversion derived from OpportunityHistory.
+
+    For each stage, compute the share of opportunities that ever entered
+    that stage *and* also entered the next stage in the configured order.
     """
-    time_data = snow_client.execute_query(time_query)
-    df_time = pd.DataFrame(time_data)
-    
-    if not df_time.empty:
-        plt.figure(figsize=(10, 6))
-        plt.bar(df_time['STAGE_NAME'], df_time['AVG_DAYS'], color='mediumpurple')
-        plt.xlabel('Stage')
-        plt.ylabel('Average Days')
-        plt.title('Average Time in Stage')
-        plt.xticks(rotation=45, ha='right')
-        plt.tight_layout()
-        path = settings.OUTPUT_DIR / f'pipeline_health_time_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png'
-        plt.savefig(path, dpi=100, bbox_inches='tight')
-        plt.close()
-        chart_paths.append(path)
-        logger.info(f"Chart 3 saved: {path.name}")
-    
-    trend_query = """
-        SELECT
-            DATE_TRUNC('week', created_date) as week_start,
-            COUNT(*) as opportunities
+    rows = snow_client.execute_query("""
+        WITH reached AS (
+            SELECT DISTINCT opportunity_id, stage_name
+            FROM dim_stage_history
+        ),
+        ordered AS (
+            SELECT s.position, s.stage_name, COUNT(DISTINCT r.opportunity_id) AS reached_count
+            FROM (
+                SELECT 1 AS position, 'Prospecting'   AS stage_name UNION ALL
+                SELECT 2, 'Qualification'             UNION ALL
+                SELECT 3, 'Needs Analysis'            UNION ALL
+                SELECT 4, 'Proposal'                  UNION ALL
+                SELECT 5, 'Negotiation'               UNION ALL
+                SELECT 6, 'Closed Won'
+            ) s
+            LEFT JOIN reached r ON r.stage_name = s.stage_name
+            GROUP BY s.position, s.stage_name
+        )
+        SELECT position, stage_name, reached_count
+        FROM ordered
+        ORDER BY position
+    """)
+    if not rows:
+        logger.info("No stage history available; skipping conversion chart")
+        return []
+
+    df = pd.DataFrame(rows).sort_values('POSITION').reset_index(drop=True)
+    df['NEXT_REACHED'] = df['REACHED_COUNT'].shift(-1)
+    df['CONVERSION_PCT'] = (df['NEXT_REACHED'] / df['REACHED_COUNT'].replace(0, pd.NA) * 100).round(1)
+
+    plot_df = df.dropna(subset=['CONVERSION_PCT'])
+    if plot_df.empty:
+        return []
+
+    labels = [f"{a} → {b}" for a, b in zip(plot_df['STAGE_NAME'], df['STAGE_NAME'].shift(-1).dropna())]
+
+    plt.figure(figsize=(9, 5))
+    bars = plt.bar(labels, plot_df['CONVERSION_PCT'], color='coral', width=0.6)
+    for bar, value in zip(bars, plot_df['CONVERSION_PCT']):
+        plt.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                 f"{value:.0f}%", ha='center', va='bottom', fontsize=9)
+    plt.ylabel('Conversion to next stage (%)')
+    plt.xlabel('Stage transition')
+    plt.title('Stage-to-stage conversion (from OpportunityHistory)')
+    plt.ylim(0, max(110, plot_df['CONVERSION_PCT'].max() + 10))
+    plt.xticks(rotation=30, ha='right')
+    plt.tight_layout()
+    path = chart_path('pipeline_health_conversions', out)
+    plt.savefig(path, dpi=100, bbox_inches='tight')
+    plt.close()
+    return [path]
+
+
+def _chart_time_in_stage(snow_client: SnowflakeClient, out: Path) -> List[Path]:
+    """Average days an opportunity sits in each stage, computed from
+    consecutive OpportunityHistory rows ordered by entered_at."""
+    rows = snow_client.execute_query("""
+        WITH ordered AS (
+            SELECT
+                opportunity_id,
+                stage_name,
+                entered_at,
+                LEAD(entered_at) OVER (
+                    PARTITION BY opportunity_id ORDER BY entered_at
+                ) AS next_entered_at
+            FROM dim_stage_history
+        )
+        SELECT stage_name,
+               AVG(DATEDIFF('day', entered_at, COALESCE(next_entered_at, CURRENT_TIMESTAMP())))
+                   AS avg_days
+        FROM ordered
+        GROUP BY stage_name
+        ORDER BY avg_days DESC
+    """)
+    if not rows:
+        return []
+
+    df = pd.DataFrame(rows)
+    plt.figure(figsize=(10, 6))
+    plt.bar(df['STAGE_NAME'], df['AVG_DAYS'], color='mediumpurple')
+    plt.ylabel('Average days in stage')
+    plt.xlabel('Stage')
+    plt.title('Average time per stage')
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    path = chart_path('pipeline_health_time', out)
+    plt.savefig(path, dpi=100, bbox_inches='tight')
+    plt.close()
+    return [path]
+
+
+def _chart_weekly_trend(snow_client: SnowflakeClient, out: Path) -> List[Path]:
+    rows = snow_client.execute_query("""
+        SELECT DATE_TRUNC('week', created_date) AS week_start,
+               COUNT(*)                          AS opportunities
         FROM fact_opportunities
-        WHERE created_date >= DATEADD(week, -12, CURRENT_DATE())
-          AND created_date IS NOT NULL
+        WHERE created_date IS NOT NULL
+          AND created_date >= DATEADD(week, -12, CURRENT_DATE())
         GROUP BY week_start
         ORDER BY week_start
-    """
-    trend_raw = snow_client.execute_query(trend_query)
-    df_trend = pd.DataFrame(trend_raw)
+    """)
+    if not rows:
+        return []
 
-    if not df_trend.empty:
-        df_trend['WEEK_LABEL'] = pd.to_datetime(df_trend['WEEK_START']).dt.strftime('%m/%d')
-        plt.figure(figsize=(10, 6))
-        plt.plot(df_trend['WEEK_LABEL'], df_trend['OPPORTUNITIES'], marker='o', linewidth=2, color='seagreen')
-        plt.xlabel('Week')
-        plt.ylabel('Opportunities')
-        plt.title('Weekly Pipeline Trend')
-        plt.xticks(rotation=45, ha='right')
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        path = settings.OUTPUT_DIR / f'pipeline_health_trend_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png'
-        plt.savefig(path, dpi=100, bbox_inches='tight')
-        plt.close()
-        chart_paths.append(path)
-        logger.info(f"Chart 4 saved: {path.name}")
-    
-    return chart_paths
+    df = pd.DataFrame(rows)
+    df['LABEL'] = pd.to_datetime(df['WEEK_START']).dt.strftime('%m/%d')
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(df['LABEL'], df['OPPORTUNITIES'], marker='o', linewidth=2, color='seagreen')
+    plt.ylabel('New opportunities created')
+    plt.xlabel('Week')
+    plt.title('Weekly pipeline trend (last 12 weeks)')
+    plt.xticks(rotation=45, ha='right')
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    path = chart_path('pipeline_health_trend', out)
+    plt.savefig(path, dpi=100, bbox_inches='tight')
+    plt.close()
+    return [path]
+
 
 def build_data_summary(metrics: Dict) -> str:
-    summary = f"""
-Total Opportunities: {metrics['total_opportunities']}
-Closed Won: {metrics['closed_won']}
-Closed Lost: {metrics['closed_lost']}
-Close Rate: {metrics['close_rate']:.1f}%
-Average Days to Close: {metrics['avg_days_to_close']:.0f} days
-Pipeline Value: ${metrics['pipeline_value']:,.0f}
-Average Deal Size: ${metrics['avg_deal_size']:,.0f}
-
-STAGE BREAKDOWN:
-"""
-    
-    for stage in metrics['stage_breakdown']:
-        summary += f"\n{stage['STAGE_NAME']}: {stage['COUNT']} opportunities, "
-        summary += f"Avg {stage['AVG_DAYS_IN_STAGE']:.0f} days, "
-        summary += f"${stage['STAGE_VALUE']:,.0f} value"
-    
-    return summary
-
+    lines = [
+        f"Total Opportunities: {metrics['total_opportunities']}",
+        f"Closed Won: {metrics['closed_won']}",
+        f"Closed Lost: {metrics['closed_lost']}",
+        f"Close Rate: {metrics['close_rate']:.1f}%",
+        f"Average Days to Close: {metrics['avg_days_to_close']:.0f} days",
+        f"Pipeline Value: ${metrics['pipeline_value']:,.0f}",
+        f"Average Deal Size: ${metrics['avg_deal_size']:,.0f}",
+        "",
+        "STAGE BREAKDOWN:",
+    ]
+    for s in metrics['stage_breakdown']:
+        lines.append(
+            f"{s['STAGE_NAME']}: {s['COUNT']} opportunities, "
+            f"avg {(s['AVG_DAYS_IN_STAGE'] or 0):.0f} days, "
+            f"${(s['STAGE_VALUE'] or 0):,.0f} value"
+        )
+    return "\n".join(lines)
