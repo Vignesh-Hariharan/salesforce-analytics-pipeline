@@ -1,26 +1,42 @@
-id: revenue-forecast-workflow
+id: analytics-workflow
 namespace: salesforce.analytics
 
-description: Forecasts revenue based on pipeline stage probabilities
+description: |
+  Parameterized analytics runner. Called as a subflow by the Asana poller
+  and the manual trigger. Pulls a Salesforce -> Snowflake -> charts -> Gemini
+  pass for one workflow type and writes the run to pipeline_runs.
 
 inputs:
+  - id: workflow_type
+    type: SELECT
+    required: true
+    values:
+      - sales-pipeline-health
+      - rep-performance
+      - revenue-forecast
   - id: asana_task_gid
     type: STRING
     required: false
+    defaults: ""
   - id: asana_task_url
     type: STRING
     required: false
+    defaults: ""
 
 tasks:
-  - id: run_pipeline
+  - id: run
     type: io.kestra.plugin.scripts.shell.Commands
     taskRunner:
       type: io.kestra.plugin.core.runner.Process
     commands:
       - |
+        set -euo pipefail
         export SNOWFLAKE_ACCOUNT=$(echo $SECRET_SNOWFLAKE_ACCOUNT | base64 -d)
         export SNOWFLAKE_USER=$(echo $SECRET_SNOWFLAKE_USER | base64 -d)
         export SNOWFLAKE_PASSWORD=$(echo $SECRET_SNOWFLAKE_PASSWORD | base64 -d)
+        export SNOWFLAKE_DATABASE="SALES_ANALYTICS"
+        export SNOWFLAKE_SCHEMA="OPPORTUNITIES"
+        export SNOWFLAKE_WAREHOUSE="COMPUTE_WH"
         export SALESFORCE_USERNAME=$(echo $SECRET_SALESFORCE_USERNAME | base64 -d)
         export SALESFORCE_PASSWORD=$(echo $SECRET_SALESFORCE_PASSWORD | base64 -d)
         export SALESFORCE_SECURITY_TOKEN=$(echo $SECRET_SALESFORCE_SECURITY_TOKEN | base64 -d)
@@ -29,10 +45,10 @@ tasks:
         export SLACK_WEBHOOK_URL=$(echo $SECRET_SLACK_WEBHOOK_URL | base64 -d)
         export ASANA_ACCESS_TOKEN=$(echo $SECRET_ASANA_ACCESS_TOKEN | base64 -d)
         export ASANA_PROJECT_GID=$(echo $SECRET_ASANA_PROJECT_GID | base64 -d)
-        export SNOWFLAKE_DATABASE="SALES_ANALYTICS"
-        export SNOWFLAKE_SCHEMA="OPPORTUNITIES"
-        export SNOWFLAKE_WAREHOUSE="COMPUTE_WH"
-        cd /app/python && python3 -m pip install -q -r requirements.txt && python3 main.py revenue-forecast {{ inputs.asana_task_gid ?? '' }} {{ inputs.asana_task_url ?? '' }}
+
+        cd /app/python
+        python3 -m pip install -q -r requirements.txt
+        python3 main.py "{{ inputs.workflow_type }}" "{{ inputs.asana_task_gid }}" "{{ inputs.asana_task_url }}"
     retry:
       type: constant
       interval: PT30S
@@ -40,7 +56,12 @@ tasks:
       warningOnRetry: true
 
 errors:
-  - id: handle_error
-    type: io.kestra.plugin.scripts.shell.Commands
-    commands:
-      - echo "Revenue forecast workflow failed"
+  - id: notify_failure
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: salesforce.analytics
+    flowId: analytics-failure-handler
+    inputs:
+      workflow_type: "{{ inputs.workflow_type }}"
+      asana_task_gid: "{{ inputs.asana_task_gid }}"
+      execution_id: "{{ execution.id }}"
+      error_message: "{{ errorMessage() }}"

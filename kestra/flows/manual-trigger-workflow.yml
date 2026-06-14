@@ -1,83 +1,40 @@
 id: manual-trigger-workflow
 namespace: salesforce.analytics
 
-description: Manual trigger for running analytics workflows from Kestra UI
+description: |
+  Run one or more analytics workflows from the Kestra UI. Each selected
+  workflow type is dispatched through the shared analytics subflow.
 
 inputs:
   - id: workflow_types
     type: MULTISELECT
+    required: true
     values:
       - sales-pipeline-health
       - rep-performance
       - revenue-forecast
-    required: true
     defaults:
       - sales-pipeline-health
-    description: Select one or more analytics workflows to run
   - id: asana_task_gid
     type: STRING
     required: false
-    description: Optional Asana task ID to update with results
+    defaults: ""
   - id: asana_task_url
     type: STRING
     required: false
-    description: Optional Asana task URL for Slack notification button
-
-variables:
-  valid_workflows:
-    - sales-pipeline-health
-    - rep-performance
-    - revenue-forecast
+    defaults: ""
 
 tasks:
-  - id: validate_inputs
-    type: io.kestra.plugin.scripts.shell.Commands
-    commands:
-      - 'echo "Selected workflows: {{ inputs.workflow_types }}"'
-      - 'echo "Validation passed"'
-  
-  - id: run_workflows
+  - id: dispatch
     type: io.kestra.plugin.core.flow.ForEach
     values: "{{ inputs.workflow_types }}"
     tasks:
-      - id: run_single_workflow
-        type: io.kestra.plugin.scripts.shell.Commands
-        taskRunner:
-          type: io.kestra.plugin.core.runner.Process
-        commands:
-          - |
-            export SNOWFLAKE_ACCOUNT=$(echo $SECRET_SNOWFLAKE_ACCOUNT | base64 -d)
-            export SNOWFLAKE_USER=$(echo $SECRET_SNOWFLAKE_USER | base64 -d)
-            export SNOWFLAKE_PASSWORD=$(echo $SECRET_SNOWFLAKE_PASSWORD | base64 -d)
-            export SALESFORCE_USERNAME=$(echo $SECRET_SALESFORCE_USERNAME | base64 -d)
-            export SALESFORCE_PASSWORD=$(echo $SECRET_SALESFORCE_PASSWORD | base64 -d)
-            export SALESFORCE_SECURITY_TOKEN=$(echo $SECRET_SALESFORCE_SECURITY_TOKEN | base64 -d)
-            export SALESFORCE_DOMAIN=$(echo $SECRET_SALESFORCE_DOMAIN | base64 -d)
-            export GEMINI_API_KEY=$(echo $SECRET_GEMINI_API_KEY | base64 -d)
-            export SLACK_WEBHOOK_URL=$(echo $SECRET_SLACK_WEBHOOK_URL | base64 -d)
-            export ASANA_ACCESS_TOKEN=$(echo $SECRET_ASANA_ACCESS_TOKEN | base64 -d)
-            export ASANA_PROJECT_GID=$(echo $SECRET_ASANA_PROJECT_GID | base64 -d)
-            export SNOWFLAKE_DATABASE="SALES_ANALYTICS"
-            export SNOWFLAKE_SCHEMA="OPPORTUNITIES"
-            export SNOWFLAKE_WAREHOUSE="COMPUTE_WH"
-            cd /app/python && python3 -m pip install -q -r requirements.txt && python3 main.py {{ taskrun.value }} {{ inputs.asana_task_gid ?? '' }} {{ inputs.asana_task_url ?? '' }}
-        retry:
-          type: constant
-          interval: PT30S
-          maxAttempt: 3
-          warningOnRetry: true
-  
-  - id: log_completion
-    type: io.kestra.plugin.scripts.shell.Commands
-    commands:
-      - 'echo "Manual workflow execution completed"'
-      - 'echo "Total workflows executed: {{ inputs.workflow_types | length }}"'
-      - 'echo "Asana Task: {{ inputs.asana_task_gid ?? ''N/A'' }}"'
-
-errors:
-  - id: handle_error
-    type: io.kestra.plugin.scripts.shell.Commands
-    commands:
-      - 'echo "Manual workflow execution failed"'
-      - 'echo "Check logs for details"'
-
+      - id: run_analytics
+        type: io.kestra.plugin.core.flow.Subflow
+        namespace: salesforce.analytics
+        flowId: analytics-workflow
+        wait: true
+        inputs:
+          workflow_type: "{{ taskrun.value }}"
+          asana_task_gid: "{{ inputs.asana_task_gid }}"
+          asana_task_url: "{{ inputs.asana_task_url }}"

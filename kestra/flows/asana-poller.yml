@@ -1,73 +1,71 @@
 id: asana-poller
 namespace: salesforce.analytics
 
-description: Polls Asana every 6 hours for tasks
+description: |
+  Every 6 hours, scan the configured Asana project for incomplete tasks that
+  carry a workflow tag and dispatch each one through the analytics subflow.
+  This flow does not run any Python pipeline code itself — it only routes.
 
 triggers:
-  - id: schedule
+  - id: every_six_hours
     type: io.kestra.plugin.core.trigger.Schedule
     cron: "0 */6 * * *"
 
 tasks:
-  - id: check_and_run
-    type: io.kestra.plugin.scripts.shell.Commands
+  - id: list_tasks
+    type: io.kestra.plugin.scripts.python.Script
     taskRunner:
       type: io.kestra.plugin.core.runner.Process
-    commands:
+    beforeCommands:
       - pip install -q requests
-      - |
-        export SNOWFLAKE_ACCOUNT=$(echo $SECRET_SNOWFLAKE_ACCOUNT | base64 -d)
-        export SNOWFLAKE_USER=$(echo $SECRET_SNOWFLAKE_USER | base64 -d)
-        export SNOWFLAKE_PASSWORD=$(echo $SECRET_SNOWFLAKE_PASSWORD | base64 -d)
-        export SNOWFLAKE_DATABASE="SALES_ANALYTICS"
-        export SNOWFLAKE_SCHEMA="OPPORTUNITIES"
-        export SNOWFLAKE_WAREHOUSE="COMPUTE_WH"
-        export SALESFORCE_USERNAME=$(echo $SECRET_SALESFORCE_USERNAME | base64 -d)
-        export SALESFORCE_PASSWORD=$(echo $SECRET_SALESFORCE_PASSWORD | base64 -d)
-        export SALESFORCE_SECURITY_TOKEN=$(echo $SECRET_SALESFORCE_SECURITY_TOKEN | base64 -d)
-        export SALESFORCE_DOMAIN=$(echo $SECRET_SALESFORCE_DOMAIN | base64 -d)
-        export GEMINI_API_KEY=$(echo $SECRET_GEMINI_API_KEY | base64 -d)
-        export SLACK_WEBHOOK_URL=$(echo $SECRET_SLACK_WEBHOOK_URL | base64 -d)
-        export ASANA_ACCESS_TOKEN=$(echo $SECRET_ASANA_ACCESS_TOKEN | base64 -d)
-        export ASANA_PROJECT_GID=$(echo $SECRET_ASANA_PROJECT_GID | base64 -d)
-        python3 << 'SCRIPT'
-        import os
-        import requests
-        import subprocess
-        import sys
+    outputFiles:
+      - tasks.json
+    script: |
+      import base64, json, os
+      import requests
 
-        token = os.getenv('ASANA_ACCESS_TOKEN')
-        project = os.getenv('ASANA_PROJECT_GID')
-        
-        headers = {"Authorization": f"Bearer {token}"}
-        url = f"https://app.asana.com/api/1.0/projects/{project}/tasks"
-        params = {"opt_fields": "name,tags.name,completed,gid,permalink_url"}
-        
-        resp = requests.get(url, headers=headers, params=params, timeout=10)
-        resp.raise_for_status()
-        tasks = resp.json()['data']
-        
-        target_tags = ['sales-pipeline-health', 'rep-performance', 'revenue-forecast']
-        
-        for task in tasks:
-            if task['completed']:
-                continue
-            
-            task_tags = [t['name'] for t in task.get('tags', [])]
-            for target_tag in target_tags:
-                if target_tag in task_tags:
-                    print(f"Processing task: {task['name']} ({target_tag})")
-                    result = subprocess.run([
-                        'python3', '/app/python/main.py',
-                        target_tag,
-                        task['gid'],
-                        task.get('permalink_url', '')
-                    ], cwd='/app/python', capture_output=True, text=True, env=os.environ.copy())
-                    
-                    if result.returncode == 0:
-                        print(f"✓ Success: {task['name']}")
-                    else:
-                        print(f"✗ Failed: {task['name']}")
-                        print(result.stderr)
-                    break
-        SCRIPT
+      token = base64.b64decode(os.environ['SECRET_ASANA_ACCESS_TOKEN']).decode()
+      project = base64.b64decode(os.environ['SECRET_ASANA_PROJECT_GID']).decode()
+
+      target_tags = {'sales-pipeline-health', 'rep-performance', 'revenue-forecast'}
+
+      resp = requests.get(
+          f"https://app.asana.com/api/1.0/projects/{project}/tasks",
+          headers={"Authorization": f"Bearer {token}"},
+          params={"opt_fields": "name,tags.name,completed,gid,permalink_url"},
+          timeout=10,
+      )
+      resp.raise_for_status()
+
+      matched = []
+      for task in resp.json().get('data', []):
+          if task.get('completed'):
+              continue
+          tags = {t['name'] for t in task.get('tags', [])}
+          tag = next((t for t in target_tags if t in tags), None)
+          if not tag:
+              continue
+          matched.append({
+              'workflow_type': tag,
+              'asana_task_gid': task['gid'],
+              'asana_task_url': task.get('permalink_url', ''),
+              'name': task['name'],
+          })
+
+      print(f"Matched {len(matched)} task(s)")
+      with open('tasks.json', 'w') as f:
+          json.dump(matched, f)
+
+  - id: dispatch
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{ read(outputs.list_tasks.outputFiles['tasks.json']) }}"
+    tasks:
+      - id: run_analytics
+        type: io.kestra.plugin.core.flow.Subflow
+        namespace: salesforce.analytics
+        flowId: analytics-workflow
+        wait: true
+        inputs:
+          workflow_type: "{{ json(taskrun.value).workflow_type }}"
+          asana_task_gid: "{{ json(taskrun.value).asana_task_gid }}"
+          asana_task_url: "{{ json(taskrun.value).asana_task_url }}"

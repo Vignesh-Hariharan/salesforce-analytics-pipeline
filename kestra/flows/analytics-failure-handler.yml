@@ -1,0 +1,88 @@
+id: analytics-failure-handler
+namespace: salesforce.analytics
+
+description: |
+  Posts a structured failure alert to Slack and (when applicable) leaves a
+  failure comment on the originating Asana task. Triggered as a subflow by
+  the analytics-workflow `errors:` block.
+
+inputs:
+  - id: workflow_type
+    type: STRING
+    required: true
+  - id: execution_id
+    type: STRING
+    required: true
+  - id: asana_task_gid
+    type: STRING
+    required: false
+    defaults: ""
+  - id: error_message
+    type: STRING
+    required: false
+    defaults: "(no error message captured)"
+
+tasks:
+  - id: notify
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      - |
+        set -euo pipefail
+        export SLACK_WEBHOOK_URL=$(echo $SECRET_SLACK_WEBHOOK_URL | base64 -d)
+        export ASANA_ACCESS_TOKEN=$(echo $SECRET_ASANA_ACCESS_TOKEN | base64 -d || true)
+
+        python3 - <<'PY'
+        import json
+        import os
+        import sys
+        import urllib.request
+
+        webhook = os.environ['SLACK_WEBHOOK_URL']
+        workflow = "{{ inputs.workflow_type }}"
+        execution = "{{ inputs.execution_id }}"
+        asana_gid = "{{ inputs.asana_task_gid }}"
+        error = """{{ inputs.error_message }}"""
+
+        text_lines = [
+            f":rotating_light: *Analytics workflow failed*: `{workflow}`",
+            f"Execution: `{execution}`",
+        ]
+        if asana_gid:
+            text_lines.append(f"Asana task GID: `{asana_gid}`")
+        text_lines.append(f"```{error[:1500]}```")
+
+        body = json.dumps({"text": "\n".join(text_lines)}).encode("utf-8")
+        req = urllib.request.Request(webhook, data=body,
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                if r.status >= 300:
+                    print(f"Slack returned {r.status}", file=sys.stderr)
+                    sys.exit(1)
+        except Exception as e:
+            print(f"Slack post failed: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        token = os.getenv("ASANA_ACCESS_TOKEN")
+        if asana_gid and token:
+            data = json.dumps({"data": {
+                "text": f"Automated analysis failed.\n"
+                        f"Workflow: {workflow}\n"
+                        f"Execution: {execution}\n"
+                        f"Error: {error[:500]}"
+            }}).encode("utf-8")
+            req = urllib.request.Request(
+                f"https://app.asana.com/api/1.0/tasks/{asana_gid}/stories",
+                data=data,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+            )
+            try:
+                urllib.request.urlopen(req, timeout=10)
+            except Exception as e:
+                print(f"Asana failure-comment post failed: {e}", file=sys.stderr)
+        PY
