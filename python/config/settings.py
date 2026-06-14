@@ -31,8 +31,6 @@ SLACK_WEBHOOK_URL = get_required_env('SLACK_WEBHOOK_URL')
 ASANA_ACCESS_TOKEN = os.getenv('ASANA_ACCESS_TOKEN')
 ASANA_PROJECT_GID = os.getenv('ASANA_PROJECT_GID')
 
-IMGUR_CLIENT_ID = os.getenv('IMGUR_CLIENT_ID', '546c25a59c58ad7')
-
 def is_asana_configured() -> bool:
     return bool(ASANA_ACCESS_TOKEN and ASANA_PROJECT_GID)
 
