@@ -2,16 +2,22 @@
 .env.docker
 !.env.example
 !.env.docker.example
-*.pyc
+
 __pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+
 *.log
-outputs/charts/*.png
-.DS_Store
 *.swp
+.DS_Store
+
 .vscode/
 .idea/
+
 venv/
 env/
-ASANA_USAGE_GUIDE.md
-HOW_TO_REQUEST_ANALYSIS.md
+.venv/
 
+outputs/charts/*.png

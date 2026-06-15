@@ -1,290 +1,223 @@
 # Salesforce Opportunity Analytics Pipeline
 
-Automated pipeline that pulls Salesforce opportunity data, generates charts, and uses Gemini AI to produce insights. Orchestrated by Kestra, triggered by Asana tasks.
+End-to-end Salesforce reporting pipeline. An Asana task with one of three tags
+triggers a Kestra workflow that pulls opportunity history out of Salesforce,
+loads a star schema in Snowflake, computes the metrics in SQL, renders four
+charts with matplotlib, and asks Gemini for short, structured commentary on
+top. Results land back on the Asana task and in a Slack channel.
 
-## What It Does
-
-Create an Asana task with a specific tag, and the system:
-1. Polls Asana every 6 hours (or trigger manually via Kestra UI)
-2. Extracts opportunities and activities from Salesforce
-3. Loads data into Snowflake
-4. Calculates metrics and generates 4 charts (matplotlib)
-5. Sends charts + data to Gemini for AI analysis
-6. Posts results to Slack with embedded images
-7. Uploads charts to Asana task, adds AI insights, marks complete
-
-Three analysis types available, triggered by different Asana tags.
+The point of the project is the orchestration and the data plumbing. Gemini
+adds a one-paragraph narrative per chart; the metrics themselves are derived
+from Snowflake, not the model.
 
 ## Demo
 
-### Creating an Asana Task
-Create a task in Asana and tag it with one of the three workflow tags to trigger analysis:
+### Creating an Asana task
+<img src="docs/images/asana-task-creation.gif" alt="Asana task creation" width="900"/>
 
-<img src="docs/images/asana-task-creation.gif" alt="Asana Task Creation" width="900"/>
+### Workflow execution and Slack notification
+<img src="docs/images/kestra-workflow-slack.gif" alt="Kestra workflow and Slack" width="900"/>
 
-### Workflow Execution & Slack Notification
-Kestra orchestrates the workflow and sends results to Slack with embedded charts:
+### Completed Asana task
+<img src="docs/images/asana-completed-task.png" alt="Completed Asana task" width="400"/>
 
-<img src="docs/images/kestra-workflow-slack.gif" alt="Kestra Workflow and Slack" width="900"/>
+## Architecture
 
-### Completed Asana Task
-The task is automatically marked complete with charts attached and AI insights added as comments:
+```
+Asana task (tag)
+   │
+   ▼
+asana-poller (Kestra, every 6h)  ──►  list matching tasks
+   │
+   ▼  per task, as a Subflow call
+analytics-workflow (Kestra)      ──►  python/main.py <workflow_type>
+   │                                       │
+   │                                       ├─ Salesforce: Opportunity, Task, OpportunityHistory
+   │                                       ├─ Snowflake: MERGE into fact + dim tables
+   │                                       ├─ Snowflake: SQL metrics + funnel
+   │                                       ├─ matplotlib: 4 charts
+   │                                       ├─ Gemini 2.0 Flash: text commentary
+   │                                       ├─ Slack: structured notification
+   │                                       └─ Asana: chart attachments + comment + complete
+   │
+   ▼  on failure
+analytics-failure-handler (Kestra)  ──►  Slack alert + Asana failure comment
+```
 
-<img src="docs/images/asana-completed-task.png" alt="Asana Completed Task" width="400"/>
+The three per-workflow YAML flows that used to duplicate this boilerplate have
+been collapsed into a single parameterized subflow (`analytics-workflow`).
+Both the scheduled poller and the manual trigger call the same subflow.
 
 ## Workflows
 
-**Pipeline Health** (`sales-pipeline-health`)
-- Distribution by stage, conversion rates, time in stage, weekly trends
-- Use for identifying bottlenecks
+| Asana tag                | Charts produced                                                                                                  | Use case                       |
+|--------------------------|-------------------------------------------------------------------------------------------------------------------|--------------------------------|
+| `sales-pipeline-health`  | Stage distribution · stage-to-stage conversion (from `OpportunityHistory`) · time per stage · 12-week new-opp trend | Identifying bottlenecks        |
+| `rep-performance`        | Close rate by rep · avg deal size by rep · activities vs. outcome · activity distribution                          | Coaching, performance reviews  |
+| `revenue-forecast`       | Pipeline waterfall · stage win-probability (historical with default fallback) · revenue trend · pipeline age      | Forecast review, board prep    |
 
-**Rep Performance** (`rep-performance`)  
-- Close rates, deal sizes, activity patterns by rep
-- Use for coaching and reviews
+### How conversion is computed
 
-**Revenue Forecast** (`revenue-forecast`)
-- Pipeline value, weighted forecast, at-risk analysis
-- Use for board meetings and planning
+Stage-to-stage conversion uses `OpportunityHistory` rows from Salesforce
+(persisted to `dim_stage_history` in Snowflake), so each conversion percentage
+is a real ratio of unique opportunities that *reached* one stage to those that
+also *reached* the next. No interpolated or hard-coded values.
 
-## Tech Stack
+### How the forecast weights are computed
 
-- **Kestra**: Workflow orchestration (Docker)
-- **Python**: Data extraction, transformation, chart generation
-- **Salesforce API**: Source data (opportunities + tasks)
-- **Snowflake**: Data warehouse
-- **Gemini 2.0 Flash**: Multimodal AI (text + image analysis)
-- **Slack**: Notifications via webhook
-- **Asana**: Request management and results delivery
-- **Imgur**: Chart hosting for Slack
+Win probability per stage is computed as `won / closed` from historical
+opportunities that ever entered that stage. Stages with fewer than ten closed
+opportunities fall back to documented Salesforce defaults; the chart and Slack
+message both flag which stages used the fallback so the number is never
+confused with a fitted estimate.
+
+## Tech stack
+
+- **Kestra** — orchestration (subflow + ForEach + failure handler)
+- **Salesforce REST/SOQL** — `Opportunity`, `Task`, `OpportunityHistory`
+- **Snowflake** — `fact_opportunities`, `dim_activities`, `dim_stage_history`, `pipeline_runs`
+- **Python 3.11** — pandas, matplotlib, simple-salesforce, snowflake-connector-python
+- **Gemini 2.0 Flash** — multimodal commentary (text + the four chart images)
+- **Slack** — structured incoming-webhook notifications
+- **Asana** — request intake (tag-based) and result delivery
 
 ## Setup
 
-### Prerequisites
+### 1. Prerequisites
+
 - Docker Desktop
-- Salesforce account (sandbox or developer edition)
+- Salesforce org with `OpportunityHistory` enabled (default for standard editions)
 - Snowflake account
-- Google Gemini API key
-- Slack webhook URL
-- Asana account with PAT
+- Gemini API key
+- Slack incoming-webhook URL
+- Optional: Asana account + PAT + project GID
 
-### 1. Clone and Configure
+### 2. Configure secrets
+
+There are two `.env` files because there are two execution paths:
+
+| File                | Used by               | Format                                            |
+|---------------------|-----------------------|---------------------------------------------------|
+| `.env`              | local `python main.py`| Plain values, no prefix                           |
+| `.env.docker`       | docker-compose / Kestra | Base64-encoded values prefixed `KESTRA_SECRET_*` |
 
 ```bash
-git clone https://github.com/Vignesh-Hariharan/salesforce-analytics-pipeline.git
-cd salesforce-analytics-pipeline
-cp .env.example .env
+cp .env.example         .env          # local Python
+cp .env.docker.example  .env.docker   # docker-compose
 ```
 
-Edit `.env` with your credentials:
+Then fill them in. The Kestra flows decode the base64 values at task start.
+Base64 is encoding, not encryption — both files are gitignored, but the
+`.env.docker` form is no more secure than `.env`.
+
+### 3. Create Snowflake objects
+
 ```bash
-# Snowflake
-SNOWFLAKE_ACCOUNT=your-account-id
-SNOWFLAKE_USER=your-username
-SNOWFLAKE_PASSWORD=your-password
-SNOWFLAKE_DATABASE=SALES_ANALYTICS
-SNOWFLAKE_SCHEMA=OPPORTUNITIES
-SNOWFLAKE_WAREHOUSE=COMPUTE_WH
-
-# Salesforce
-SALESFORCE_USERNAME=your-email
-SALESFORCE_PASSWORD=your-password
-SALESFORCE_SECURITY_TOKEN=your-token
-SALESFORCE_DOMAIN=login  # or 'test' for sandbox
-
-# Gemini
-GEMINI_API_KEY=your-api-key
-
-# Slack
-SLACK_WEBHOOK_URL=your-webhook-url
-
-# Asana
-ASANA_ACCESS_TOKEN=your-token
-ASANA_PROJECT_GID=your-project-id
+snowsql -f sql/setup_snowflake.sql
+# or paste it into the Snowflake UI
 ```
 
-### 2. Setup Snowflake
+### 4. Create the three Asana tags
 
-Run `sql/setup_snowflake.sql` in Snowflake UI to create database, schema, and tables.
+`sales-pipeline-health`, `rep-performance`, `revenue-forecast` (lowercase, exact).
 
-### 3. Setup Asana
-
-Create three tags in your Asana project:
-- `sales-pipeline-health`
-- `rep-performance`
-- `revenue-forecast`
-
-### 4. Start Kestra
+### 5. Start Kestra
 
 ```bash
 cd docker
-docker-compose up -d
+docker compose up -d
+open http://localhost:8080
 ```
 
-Wait 30 seconds, then open http://localhost:8080
+In the Kestra UI, create the four flows under the `salesforce.analytics`
+namespace:
 
-### 5. Upload Workflows
-
-In Kestra UI, create these flows under namespace `salesforce.analytics`:
+- `kestra/flows/analytics-workflow.yml`
+- `kestra/flows/analytics-failure-handler.yml`
 - `kestra/flows/asana-poller.yml`
 - `kestra/flows/manual-trigger-workflow.yml`
-- `kestra/flows/pipeline-health-workflow.yml`
-- `kestra/flows/rep-performance-workflow.yml`
-- `kestra/flows/revenue-forecast-workflow.yml`
 
 ## Usage
 
-### Automated (Production)
+### Scheduled (every 6 hours)
 
-1. Create an Asana task in your project
-2. Add one of the three tags (`sales-pipeline-health`, `rep-performance`, or `revenue-forecast`)
-3. Leave it incomplete
-4. Wait for next polling cycle (every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC)
-5. Results posted to Asana + Slack
+Tag any incomplete Asana task in the configured project with one of the three
+workflow tags. The next poll picks it up, runs the analysis, attaches the four
+charts, posts the structured Slack message, and marks the task complete.
 
-The system will automatically:
-- Detect the new task with the workflow tag
-- Execute the corresponding analysis workflow
-- Generate 4 charts and AI insights
-- Upload charts to the Asana task
-- Post results to Slack with embedded images
-- Mark the task as complete
+### Manual
 
-See the [Demo](#demo) section above for a visual walkthrough.
+In the Kestra UI run `manual-trigger-workflow`, pick one or more workflow
+types, optionally pass an Asana task GID + URL, and execute.
 
-### Manual Trigger (Testing)
-
-1. Go to Kestra UI (http://localhost:8080)
-2. Navigate to `salesforce.analytics` namespace
-3. Find `manual-trigger-workflow`
-4. Click Execute
-5. Select workflow type from dropdown
-6. (Optional) Provide Asana task GID and URL for task updates
-7. Click Run
-
-Results will be sent to Slack. If you provide a valid Asana task GID, the task will be updated with charts and insights.
-
-## Project Structure
-
-```
-.
-├── docker/
-│   └── docker-compose.yml       # Kestra + Postgres
-├── kestra/flows/
-│   ├── asana-poller.yml         # Polls Asana every 6h
-│   ├── manual-trigger-workflow.yml
-│   └── *-workflow.yml           # 3 analysis workflows
-├── python/
-│   ├── clients/                 # API integrations
-│   │   ├── salesforce_client.py
-│   │   ├── snowflake_client.py
-│   │   ├── gemini_client.py
-│   │   ├── slack_client.py
-│   │   ├── asana_client.py
-│   │   └── image_host_client.py
-│   ├── workflows/               # Analysis logic
-│   │   ├── pipeline_health.py
-│   │   ├── rep_performance.py
-│   │   └── revenue_forecast.py
-│   ├── config/
-│   │   ├── settings.py
-│   │   └── prompts.py
-│   ├── utils/
-│   └── main.py
-├── sql/
-│   └── setup_snowflake.sql
-└── outputs/charts/              # Generated PNGs
-```
-
-## Data Model
-
-**fact_opportunities**
-- Opportunity details (ID, name, amount, stage, dates, owner)
-- Pre-calculated fields (days_open, days_to_close, total_activities)
-
-**dim_activities**
-- Tasks linked to opportunities
-- Activity type, date, owner
-
-**pipeline_runs**
-- Audit log of workflow executions
-- Tracks status, records processed, Gemini cost
-
-## AI Analysis
-
-Gemini receives:
-- Text prompt with metrics and data summary
-- 4 chart images (multimodal input)
-- Temperature: 0.3 (consistent output)
-- Max tokens: 800
-
-Outputs 4 insights in format:
-```
-Finding: [Observation from chart]
-Impact: [Business consequence]
-Action: [Specific next step]
-```
-
-Cost: ~$0.01 per run (Gemini 2.0 Flash pricing)
-
-## Development
-
-### Run Python Locally
+### From a developer's machine
 
 ```bash
 cd python
-pip install -r requirements.txt
-python main.py sales-pipeline-health
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+python main.py sales-pipeline-health           # no Asana side-effects
+python main.py revenue-forecast <task_gid> <task_url>
 ```
 
-### Test Individual Components
+## Data model
 
-```python
-from clients.salesforce_client import SalesforceClient
+| Table                 | Purpose                                                                |
+|-----------------------|------------------------------------------------------------------------|
+| `fact_opportunities`  | Current state per opportunity, plus derived `days_open`, `days_to_close`, `total_activities`. Owner is updated on MERGE so reassignments don't go silent. |
+| `dim_activities`      | One row per linked Salesforce `Task` activity.                         |
+| `dim_stage_history`   | One row per `OpportunityHistory` transition. Powers the funnel and time-in-stage queries. |
+| `pipeline_runs`       | Audit log: status, records processed, Gemini token usage and cost, error text on failure. |
 
-sf = SalesforceClient()
-opps = sf.get_opportunities(days=90)
-print(f"Extracted {len(opps)} opportunities")
-```
-
-### View Logs
+## Tests
 
 ```bash
-docker logs docker-kestra-1 -f
+cd python
+pip install -r requirements-dev.txt
+pytest
 ```
 
-## Troubleshooting
+The suite covers the parts most likely to drift silently: Slack insight
+parsing, retry semantics, prompt rendering, environment-variable fallback,
+and the historical-vs-fallback weight derivation used by the revenue forecast.
+CI runs `ruff`, `pytest`, and a YAML lint over the Kestra flows on every PR.
 
-**Kestra not starting?**
-- Check Docker Desktop is running
-- View logs: `docker logs docker-kestra-1`
-- Ensure ports 8080/8081 are free
+## Project layout
 
-**Salesforce auth failing?**
-- Verify username/password/token in `.env`
-- Use `login` domain for production, `test` for sandbox
-- Reset security token if needed
+```
+.
+├── .github/workflows/ci.yml
+├── docker/docker-compose.yml
+├── kestra/flows/
+│   ├── analytics-workflow.yml          # parameterized subflow
+│   ├── analytics-failure-handler.yml   # Slack + Asana alert on failure
+│   ├── asana-poller.yml                # 6h schedule, dispatches via subflow
+│   └── manual-trigger-workflow.yml
+├── python/
+│   ├── clients/                        # salesforce, snowflake, gemini, slack, asana
+│   ├── workflows/                      # one module per analysis type, plus shared extract/load
+│   ├── config/                         # settings + prompts
+│   ├── utils/                          # logger, retry, chart cleanup
+│   ├── tests/
+│   ├── main.py
+│   ├── requirements.txt
+│   └── requirements-dev.txt
+├── sql/setup_snowflake.sql
+└── outputs/charts/                     # generated PNGs (gitignored, pruned after 7 days)
+```
 
-**No images in Slack?**
-- Imgur upload might fail (temporary)
-- Charts still uploaded to Asana
-- Slack gets text-only notification
+## Operational notes
 
-**Task not processed?**
-- Verify task is in correct Asana project
-- Check tag spelling (lowercase, exact match)
-- Ensure task is incomplete
-- Wait for next 6-hour cycle or trigger manually
-
-## Notes
-
-- Uses Salesforce sandbox data (last 90 days)
-- Imgur hosting is a demo convenience; for real business data, use Slack file
-  upload or presigned S3 URLs instead of a public image host
-- Snowflake X-Small warehouse (auto-suspend after 60s)
-- Gemini API has free tier (15 req/min)
-- Asana API: 150 req/min limit
-- All credentials stored in `.env` (not committed)
-- Charts auto-deleted after 7 days
+- Runs use the most recent 90 days of opportunity data.
+- Snowflake warehouse: `X-Small`, auto-suspend 60s.
+- Salesforce SOQL `IN (...)` is batched at 200 IDs per request to stay well
+  under the 100 KB query limit.
+- Snowflake MERGE statements use `executemany` in 500-row batches.
+- A failed Kestra execution invokes the `analytics-failure-handler` subflow,
+  which posts the workflow type, execution ID, and error to Slack, and (when
+  triggered by a tagged task) leaves a failure comment on the Asana task.
+- All credentials are read from `.env` / `.env.docker`, neither of which is
+  committed.
 
 ## License
 
