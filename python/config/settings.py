@@ -1,39 +1,64 @@
+import base64
 import os
-from dotenv import load_dotenv
 from pathlib import Path
 
-env_path = Path(__file__).parent.parent.parent / '.env'
-if env_path.exists():
-    load_dotenv(dotenv_path=env_path)
+from dotenv import load_dotenv
 
-def get_required_env(var_name: str) -> str:
-    value = os.getenv(var_name)
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# When running locally, load `.env` (plain values, no prefix). The Kestra path
+# uses base64-encoded `KESTRA_SECRET_*` values from `.env.docker` and decodes
+# them in the workflow scripts before invoking Python.
+_local_env = REPO_ROOT / '.env'
+if _local_env.exists():
+    load_dotenv(dotenv_path=_local_env, override=False)
+
+# Backwards-compatible fallback: if a developer has only the Kestra-style
+# variables defined locally (KESTRA_SECRET_FOO=base64), surface them under the
+# expected names so a `python main.py` invocation still works.
+_KESTRA_PREFIX = 'KESTRA_SECRET_'
+for key, value in list(os.environ.items()):
+    if not key.startswith(_KESTRA_PREFIX):
+        continue
+    plain_name = key[len(_KESTRA_PREFIX):]
+    if os.getenv(plain_name):
+        continue
+    try:
+        os.environ[plain_name] = base64.b64decode(value).decode('utf-8')
+    except Exception:
+        # Value wasn't base64; leave it untouched and fail loudly later if
+        # something requires it.
+        continue
+
+
+def _required(name: str) -> str:
+    value = os.getenv(name)
     if not value:
-        raise ValueError(f"Missing required environment variable: {var_name}")
+        raise ValueError(f"Missing required environment variable: {name}")
     return value
 
-SNOWFLAKE_ACCOUNT = get_required_env('SNOWFLAKE_ACCOUNT')
-SNOWFLAKE_USER = get_required_env('SNOWFLAKE_USER')
-SNOWFLAKE_PASSWORD = get_required_env('SNOWFLAKE_PASSWORD')
-SNOWFLAKE_DATABASE = get_required_env('SNOWFLAKE_DATABASE')
-SNOWFLAKE_SCHEMA = get_required_env('SNOWFLAKE_SCHEMA')
-SNOWFLAKE_WAREHOUSE = get_required_env('SNOWFLAKE_WAREHOUSE')
 
-SALESFORCE_USERNAME = get_required_env('SALESFORCE_USERNAME')
-SALESFORCE_PASSWORD = get_required_env('SALESFORCE_PASSWORD')
-SALESFORCE_SECURITY_TOKEN = get_required_env('SALESFORCE_SECURITY_TOKEN')
-SALESFORCE_DOMAIN = os.getenv('SALESFORCE_DOMAIN', 'login')
+SNOWFLAKE_ACCOUNT   = _required('SNOWFLAKE_ACCOUNT')
+SNOWFLAKE_USER      = _required('SNOWFLAKE_USER')
+SNOWFLAKE_PASSWORD  = _required('SNOWFLAKE_PASSWORD')
+SNOWFLAKE_DATABASE  = _required('SNOWFLAKE_DATABASE')
+SNOWFLAKE_SCHEMA    = _required('SNOWFLAKE_SCHEMA')
+SNOWFLAKE_WAREHOUSE = _required('SNOWFLAKE_WAREHOUSE')
 
-GEMINI_API_KEY = get_required_env('GEMINI_API_KEY')
+SALESFORCE_USERNAME       = _required('SALESFORCE_USERNAME')
+SALESFORCE_PASSWORD       = _required('SALESFORCE_PASSWORD')
+SALESFORCE_SECURITY_TOKEN = _required('SALESFORCE_SECURITY_TOKEN')
+SALESFORCE_DOMAIN         = os.getenv('SALESFORCE_DOMAIN', 'login')
 
-SLACK_WEBHOOK_URL = get_required_env('SLACK_WEBHOOK_URL')
+GEMINI_API_KEY    = _required('GEMINI_API_KEY')
+SLACK_WEBHOOK_URL = _required('SLACK_WEBHOOK_URL')
 
 ASANA_ACCESS_TOKEN = os.getenv('ASANA_ACCESS_TOKEN')
-ASANA_PROJECT_GID = os.getenv('ASANA_PROJECT_GID')
+ASANA_PROJECT_GID  = os.getenv('ASANA_PROJECT_GID')
+
+OUTPUT_DIR = REPO_ROOT / 'outputs' / 'charts'
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
 
 def is_asana_configured() -> bool:
     return bool(ASANA_ACCESS_TOKEN and ASANA_PROJECT_GID)
-
-OUTPUT_DIR = Path(__file__).parent.parent.parent / 'outputs' / 'charts'
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
