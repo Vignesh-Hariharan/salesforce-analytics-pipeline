@@ -25,7 +25,10 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r python/requirements-dev.txt
-          pip install pyyaml
+          pip install pyyaml pip-audit
+
+      - name: Audit dependencies
+        run: pip-audit -r python/requirements.txt
 
       - name: Lint
         run: ruff check python/ --ignore E501
