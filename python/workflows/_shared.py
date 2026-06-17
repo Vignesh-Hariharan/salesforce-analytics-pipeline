@@ -1,10 +1,14 @@
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 import pandas as pd
 
+from clients.gemini_client import GeminiClient
 from clients.salesforce_client import SalesforceClient
 from clients.snowflake_client import SnowflakeClient
+from config import settings
+from config.prompts import get_prompt
+from utils.error_handler import GeminiAPIError
 from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -59,3 +63,27 @@ def extract_and_load(sf_client: SalesforceClient, snow_client: SnowflakeClient,
 
 def chart_path(name: str, output_dir: Path) -> Path:
     return output_dir / f'{name}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png'
+
+
+def generate_optional_commentary(workflow_type: str, data_summary: str,
+                                 chart_paths: List[Path]) -> Tuple[str, Dict]:
+    """Ask the LLM for a short narrative per chart.
+
+    Commentary is an enrichment layer, not the product: the metrics and charts
+    come from SQL. When no API key is configured, or the model call fails, the
+    run continues with an empty narrative instead of failing. The reason is
+    logged so a skipped commentary is never silent.
+    """
+    empty_stats = {'tokens': 0, 'cost': 0.0}
+    if not settings.is_gemini_configured():
+        logger.info("GEMINI_API_KEY not set; skipping optional LLM commentary")
+        return "", empty_stats
+
+    prompt, temperature = get_prompt(workflow_type, data_summary)
+    try:
+        client = GeminiClient(temperature=temperature)
+        result = client.generate_insights(prompt, chart_paths)
+        return result['insights'], {'tokens': result['total_tokens'], 'cost': result['cost']}
+    except GeminiAPIError as e:
+        logger.warning(f"LLM commentary unavailable; continuing without it: {e}")
+        return "", empty_stats

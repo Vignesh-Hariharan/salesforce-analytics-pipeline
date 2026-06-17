@@ -93,18 +93,27 @@ def _update_asana_task(task_gid: str, workflow_type: str, run_id: str, result: d
 
 
 def _build_asana_comment(workflow_type: str, run_id: str, result: dict) -> str:
-    insights = [chunk for chunk in result['insights'].split('\n\n') if chunk.strip()]
-    formatted = [f"[Chart {i + 1}]\n{insight}" for i, insight in enumerate(insights)]
-    gemini = result['gemini_stats']
-    return (
-        f"Analysis complete\n\n"
-        f"{workflow_type.replace('-', ' ').title()}\n"
-        f"Records: {result['records_processed']} | Run: {run_id[:16]}\n\n"
-        f"See 4 charts attached. Each insight below corresponds to one chart.\n\n"
-        f"{chr(10).join(formatted)}\n\n"
-        f"Gemini: {gemini['tokens']} tokens (${gemini['cost']:.4f}). "
-        f"Full report posted to Slack."
-    )
+    lines = [
+        "Analysis complete",
+        "",
+        workflow_type.replace('-', ' ').title(),
+        f"Records: {result['records_processed']} | Run: {run_id[:16]}",
+        "",
+        "See 4 charts attached.",
+    ]
+
+    insights = [chunk for chunk in (result.get('insights') or '').split('\n\n') if chunk.strip()]
+    if insights:
+        lines.append("Each insight below corresponds to one chart.")
+        lines.append("")
+        lines.extend(f"[Chart {i + 1}]\n{insight}" for i, insight in enumerate(insights))
+
+    stats = result.get('gemini_stats') or {}
+    if stats.get('tokens'):
+        lines += ["", f"LLM commentary: {stats['tokens']} tokens (${stats['cost']:.4f})."]
+
+    lines += ["", "Full report posted to Slack."]
+    return "\n".join(lines)
 
 
 def _post_asana_failure(task_gid: str, workflow_type: str, run_id: str, error: str) -> None:

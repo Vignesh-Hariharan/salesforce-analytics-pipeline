@@ -50,8 +50,11 @@ SALESFORCE_PASSWORD       = _required('SALESFORCE_PASSWORD')
 SALESFORCE_SECURITY_TOKEN = _required('SALESFORCE_SECURITY_TOKEN')
 SALESFORCE_DOMAIN         = os.getenv('SALESFORCE_DOMAIN', 'login')
 
-GEMINI_API_KEY    = _required('GEMINI_API_KEY')
 SLACK_WEBHOOK_URL = _required('SLACK_WEBHOOK_URL')
+
+# Optional: enables the LLM chart-commentary step. Absent it, the pipeline
+# still extracts, loads, computes metrics, renders charts, and delivers them.
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
 ASANA_ACCESS_TOKEN = os.getenv('ASANA_ACCESS_TOKEN')
 ASANA_PROJECT_GID  = os.getenv('ASANA_PROJECT_GID')
@@ -62,3 +65,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 def is_asana_configured() -> bool:
     return bool(ASANA_ACCESS_TOKEN and ASANA_PROJECT_GID)
+
+
+def is_gemini_configured() -> bool:
+    return bool(GEMINI_API_KEY)

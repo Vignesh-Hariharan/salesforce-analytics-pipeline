@@ -8,13 +8,11 @@ from typing import Dict, List, Tuple
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from clients.gemini_client import GeminiClient
 from clients.salesforce_client import SalesforceClient
 from clients.snowflake_client import SnowflakeClient
 from config import settings
-from config.prompts import get_prompt
 from utils.logger import setup_logger
-from workflows._shared import chart_path, extract_and_load
+from workflows._shared import chart_path, extract_and_load, generate_optional_commentary
 
 logger = setup_logger(__name__)
 
@@ -52,9 +50,8 @@ def run_workflow(run_id: str) -> Dict:
         metrics = calculate_metrics(snow_client)
         chart_paths = generate_charts(snow_client, metrics)
 
-        prompt, temperature = get_prompt(WORKFLOW_TYPE, build_data_summary(metrics))
-        gemini_client = GeminiClient(temperature=temperature)
-        insights_result = gemini_client.generate_insights(prompt, chart_paths)
+        insights, gemini_stats = generate_optional_commentary(
+            WORKFLOW_TYPE, build_data_summary(metrics), chart_paths)
 
         snow_client.log_pipeline_run(
             run_id=run_id,
@@ -64,20 +61,17 @@ def run_workflow(run_id: str) -> Dict:
             end_time=datetime.now(),
             status='success',
             records_processed=len(opportunities),
-            gemini_tokens=insights_result['total_tokens'],
-            gemini_cost=insights_result['cost'],
+            gemini_tokens=gemini_stats['tokens'],
+            gemini_cost=gemini_stats['cost'],
         )
 
         return {
             'status': 'success',
             'workflow_type': WORKFLOW_TYPE,
             'metrics': metrics,
-            'insights': insights_result['insights'],
+            'insights': insights,
             'chart_paths': [str(p) for p in chart_paths],
-            'gemini_stats': {
-                'tokens': insights_result['total_tokens'],
-                'cost': insights_result['cost'],
-            },
+            'gemini_stats': gemini_stats,
             'records_processed': len(opportunities),
         }
 
