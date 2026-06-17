@@ -1,14 +1,23 @@
 # Salesforce Opportunity Analytics Pipeline
 
-End-to-end Salesforce reporting pipeline. An Asana task with one of three tags
-triggers a Kestra workflow that pulls opportunity history out of Salesforce,
-loads a star schema in Snowflake, computes the metrics in SQL, renders four
-charts with matplotlib, and asks Gemini for short, structured commentary on
-top. Results land back on the Asana task and in a Slack channel.
+An event-driven reporting pipeline for Salesforce opportunity data. Tagging an
+Asana task triggers a Kestra workflow that extracts opportunities from the
+Salesforce API, loads a star schema in Snowflake, computes pipeline metrics in
+SQL, renders four charts with matplotlib, and delivers the results to Slack and
+back to the Asana task.
 
-The point of the project is the orchestration and the data plumbing. Gemini
-adds a one-paragraph narrative per chart; the metrics themselves are derived
-from Snowflake, not the model.
+Built as a proof of concept to show end-to-end pipeline design: batched API
+extraction, idempotent `MERGE` loads, a funnel and time-in-stage derived from
+`OpportunityHistory` (not hard-coded), a single parameterized Kestra subflow
+with a scheduled poller and a failure handler, plus unit tests and CI.
+
+**What this demonstrates:** orchestration (Kestra), dimensional modeling
+(Snowflake star schema), API extraction with batching, idempotent loads, metric
+derivation in SQL, and a tested, CI-checked codebase.
+
+An optional final step asks an LLM for a one-paragraph commentary per chart. It
+is a thin enrichment layer — the numbers come from SQL, and the pipeline runs
+fine without it (see [Optional LLM commentary](#optional-llm-commentary)).
 
 ## Demo
 
@@ -36,7 +45,7 @@ analytics-workflow (Kestra)      ──►  python/main.py <workflow_type>
    │                                       ├─ Snowflake: MERGE into fact + dim tables
    │                                       ├─ Snowflake: SQL metrics + funnel
    │                                       ├─ matplotlib: 4 charts
-   │                                       ├─ Gemini 2.0 Flash: text commentary
+   │                                       ├─ (optional) LLM commentary per chart
    │                                       ├─ Slack: structured notification
    │                                       └─ Asana: chart attachments + comment + complete
    │
@@ -71,15 +80,28 @@ opportunities fall back to documented Salesforce defaults; the chart and Slack
 message both flag which stages used the fallback so the number is never
 confused with a fitted estimate.
 
+### Optional LLM commentary
+
+After the charts are rendered, an optional step sends them plus the SQL metric
+summary to the Gemini API (`gemini-2.5-flash-lite`) and asks for one short
+`Finding / Impact / Action` paragraph per chart. This is the only part of the
+pipeline that touches a model, and it is deliberately non-critical:
+
+- If `GEMINI_API_KEY` is unset, the step is skipped.
+- If the API call fails, the run logs a warning and continues.
+
+Either way the metrics, charts, Slack message, and Asana delivery are unaffected
+— the commentary is narrative on top of numbers that are already final.
+
 ## Tech stack
 
 - **Kestra** — orchestration (subflow + ForEach + failure handler)
 - **Salesforce REST/SOQL** — `Opportunity`, `Task`, `OpportunityHistory`
 - **Snowflake** — `fact_opportunities`, `dim_activities`, `dim_stage_history`, `pipeline_runs`
 - **Python 3.11** — pandas, matplotlib, simple-salesforce, snowflake-connector-python
-- **Gemini 2.0 Flash** — multimodal commentary (text + the four chart images)
 - **Slack** — structured incoming-webhook notifications
 - **Asana** — request intake (tag-based) and result delivery
+- *Optional* — LLM chart commentary via the Gemini API (`google-genai`); skipped cleanly when no key is set
 
 ## Setup
 
@@ -88,9 +110,9 @@ confused with a fitted estimate.
 - Docker Desktop
 - Salesforce org with `OpportunityHistory` enabled (default for standard editions)
 - Snowflake account
-- Gemini API key
 - Slack incoming-webhook URL
 - Optional: Asana account + PAT + project GID
+- Optional: Gemini API key (enables the LLM chart commentary)
 
 ### 2. Configure secrets
 
@@ -110,6 +132,12 @@ Then fill them in. The Kestra flows decode the base64 values at task start.
 Base64 is encoding, not encryption — both files are gitignored, but the
 `.env.docker` form is no more secure than `.env`.
 
+`.env.docker` also carries three plain (non-base64) values that configure the
+local stack rather than the pipeline: `KESTRA_BASIC_AUTH_USERNAME` (a valid
+email), `KESTRA_BASIC_AUTH_PASSWORD`, and `KESTRA_DB_PASSWORD`. The compose
+file falls back to weak defaults when they are unset, so set them before
+exposing the stack beyond localhost.
+
 ### 3. Create Snowflake objects
 
 ```bash
@@ -128,6 +156,11 @@ cd docker
 docker compose up -d
 open http://localhost:8080
 ```
+
+Kestra requires Basic Authentication; log in with the
+`KESTRA_BASIC_AUTH_USERNAME` / `KESTRA_BASIC_AUTH_PASSWORD` values from
+`.env.docker`. The UI and API are bound to `127.0.0.1` only — put the stack
+behind an authenticating reverse proxy before exposing it to a network.
 
 In the Kestra UI, create the four flows under the `salesforce.analytics`
 namespace:
@@ -167,7 +200,7 @@ python main.py revenue-forecast <task_gid> <task_url>
 | `fact_opportunities`  | Current state per opportunity, plus derived `days_open`, `days_to_close`, `total_activities`. Owner is updated on MERGE so reassignments don't go silent. |
 | `dim_activities`      | One row per linked Salesforce `Task` activity.                         |
 | `dim_stage_history`   | One row per `OpportunityHistory` transition. Powers the funnel and time-in-stage queries. |
-| `pipeline_runs`       | Audit log: status, records processed, Gemini token usage and cost, error text on failure. |
+| `pipeline_runs`       | Run audit log: status, records processed, error text on failure, and (when the optional commentary runs) the LLM token usage and approximate cost. |
 
 ## Tests
 
