@@ -12,6 +12,12 @@ CREATE WAREHOUSE IF NOT EXISTS COMPUTE_WH
 
 USE WAREHOUSE COMPUTE_WH;
 
+-- Pre-dbt schema objects (removed in the ELT refactor). Safe to run on fresh
+-- installs and on upgrades from the earlier fact/dim layout.
+DROP TABLE IF EXISTS fact_opportunities;
+DROP TABLE IF EXISTS dim_activities;
+DROP TABLE IF EXISTS dim_stage_history;
+
 -- Raw landing tables: written by the Python loader only. No derivation here;
 -- dbt builds staging, intermediate, and mart models on top.
 CREATE TABLE IF NOT EXISTS raw_opportunities (

@@ -50,7 +50,8 @@ models:
       - name: weight_source
         tests:
           - accepted_values:
-              values: ['historical', 'default']
+              arguments:
+                values: ['historical', 'default']
 
   - name: fct_revenue_forecast
     description: Weighted forecast by open pipeline stage.

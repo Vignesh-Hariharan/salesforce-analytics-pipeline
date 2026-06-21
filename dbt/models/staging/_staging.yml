@@ -25,8 +25,9 @@ models:
         tests:
           - not_null
           - relationships:
-              to: ref('stg_opportunities')
-              field: opportunity_id
+              arguments:
+                to: ref('stg_opportunities')
+                field: opportunity_id
 
   - name: stg_stage_history
     description: Cleaned, typed stage transitions from OpportunityHistory.
@@ -37,8 +38,9 @@ models:
         tests:
           - not_null
           - relationships:
-              to: ref('stg_opportunities')
-              field: opportunity_id
+              arguments:
+                to: ref('stg_opportunities')
+                field: opportunity_id
       - name: entered_at
         description: Timestamp the opportunity entered the stage.
         tests: [not_null]

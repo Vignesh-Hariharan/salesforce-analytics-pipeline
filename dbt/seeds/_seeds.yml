@@ -19,7 +19,8 @@ seeds:
         tests:
           - not_null
           - accepted_values:
-              values: ["Open - Early", "Open - Late", "Closed Won", "Closed Lost"]
+              arguments:
+                values: ["Open - Early", "Open - Late", "Closed Won", "Closed Lost"]
 
   - name: default_stage_weights
     description: >
@@ -35,5 +36,6 @@ seeds:
         tests:
           - not_null
           - dbt_utils.accepted_range:
-              min_value: 0
-              max_value: 1
+              arguments:
+                min_value: 0
+                max_value: 1

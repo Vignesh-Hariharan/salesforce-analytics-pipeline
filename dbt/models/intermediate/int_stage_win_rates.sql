@@ -13,7 +13,7 @@ closed_opps as (
     select
         opportunity_id,
         is_won
-    from {{ ref('fct_opportunities') }}
+    from {{ ref('stg_opportunities') }}
     where is_closed
 )
 

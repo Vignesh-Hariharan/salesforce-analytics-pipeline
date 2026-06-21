@@ -149,6 +149,10 @@ snowsql -f sql/setup_snowflake.sql
 # or paste it into the Snowflake UI
 ```
 
+Re-run this script when upgrading from the pre-dbt layout (`fact_opportunities`,
+`dim_activities`, `dim_stage_history`). It drops those legacy tables and creates
+the `raw_*` landing tables the loader writes to today.
+
 ### 4. Create the three Asana tags
 
 `sales-pipeline-health`, `rep-performance`, `revenue-forecast` (lowercase, exact).
