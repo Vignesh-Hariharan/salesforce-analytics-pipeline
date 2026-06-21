@@ -8,14 +8,10 @@ from config import settings
 
 logger = setup_logger(__name__)
 
-# Snowflake recommends batching paramaterized statements; 500 keeps each
-# round-trip under typical statement-size limits while still amortizing
-# network overhead.
 MERGE_BATCH_SIZE = 500
 
-
-_OPPORTUNITY_MERGE = """
-MERGE INTO fact_opportunities t
+_RAW_OPPORTUNITY_MERGE = """
+MERGE INTO raw_opportunities t
 USING (
     SELECT
         %(opportunity_id)s   AS opportunity_id,
@@ -27,10 +23,7 @@ USING (
         %(is_closed)s        AS is_closed,
         %(is_won)s           AS is_won,
         %(owner_id)s         AS owner_id,
-        %(owner_name)s       AS owner_name,
-        %(days_open)s        AS days_open,
-        %(days_to_close)s    AS days_to_close,
-        %(total_activities)s AS total_activities
+        %(owner_name)s       AS owner_name
 ) s
 ON t.opportunity_id = s.opportunity_id
 WHEN MATCHED THEN UPDATE SET
@@ -42,23 +35,20 @@ WHEN MATCHED THEN UPDATE SET
     is_won           = s.is_won,
     owner_id         = s.owner_id,
     owner_name       = s.owner_name,
-    days_open        = s.days_open,
-    days_to_close    = s.days_to_close,
-    total_activities = s.total_activities,
     load_timestamp   = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN INSERT (
     opportunity_id, opportunity_name, amount, stage_name,
     created_date, close_date, is_closed, is_won,
-    owner_id, owner_name, days_open, days_to_close, total_activities
+    owner_id, owner_name
 ) VALUES (
     s.opportunity_id, s.opportunity_name, s.amount, s.stage_name,
     s.created_date, s.close_date, s.is_closed, s.is_won,
-    s.owner_id, s.owner_name, s.days_open, s.days_to_close, s.total_activities
+    s.owner_id, s.owner_name
 )
 """
 
-_ACTIVITY_MERGE = """
-MERGE INTO dim_activities t
+_RAW_ACTIVITY_MERGE = """
+MERGE INTO raw_activities t
 USING (
     SELECT
         %(activity_id)s    AS activity_id,
@@ -79,8 +69,8 @@ WHEN NOT MATCHED THEN INSERT (
 )
 """
 
-_STAGE_HISTORY_MERGE = """
-MERGE INTO dim_stage_history t
+_RAW_STAGE_HISTORY_MERGE = """
+MERGE INTO raw_stage_history t
 USING (
     SELECT
         %(history_id)s     AS history_id,
@@ -156,7 +146,7 @@ class SnowflakeClient:
             logger.warning("No opportunities to load")
             return 0
         try:
-            return self._executemany_batched(_OPPORTUNITY_MERGE, opportunities, "opportunities")
+            return self._executemany_batched(_RAW_OPPORTUNITY_MERGE, opportunities, "raw opportunities")
         except Exception as e:
             logger.error(f"Opportunity load failed: {e}")
             raise SnowflakeLoadError(f"Opportunity load failed: {e}")
@@ -166,7 +156,7 @@ class SnowflakeClient:
             logger.warning("No activities to load")
             return 0
         try:
-            return self._executemany_batched(_ACTIVITY_MERGE, activities, "activities")
+            return self._executemany_batched(_RAW_ACTIVITY_MERGE, activities, "raw activities")
         except Exception as e:
             logger.error(f"Activity load failed: {e}")
             raise SnowflakeLoadError(f"Activity load failed: {e}")
@@ -176,7 +166,8 @@ class SnowflakeClient:
             logger.warning("No stage transitions to load")
             return 0
         try:
-            return self._executemany_batched(_STAGE_HISTORY_MERGE, transitions, "stage transitions")
+            return self._executemany_batched(
+                _RAW_STAGE_HISTORY_MERGE, transitions, "raw stage transitions")
         except Exception as e:
             logger.error(f"Stage history load failed: {e}")
             raise SnowflakeLoadError(f"Stage history load failed: {e}")
@@ -215,7 +206,6 @@ class SnowflakeClient:
             cursor.close()
             logger.info(f"Pipeline run logged: {run_id} ({status})")
         except Exception as e:
-            # Audit log failures should not mask the underlying workflow error.
             logger.error(f"Failed to log pipeline run: {e}")
 
     def close(self):

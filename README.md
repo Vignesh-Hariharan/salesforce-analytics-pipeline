@@ -2,18 +2,19 @@
 
 An event-driven reporting pipeline for Salesforce opportunity data. Tagging an
 Asana task triggers a Kestra workflow that extracts opportunities from the
-Salesforce API, loads a star schema in Snowflake, computes pipeline metrics in
-SQL, renders four charts with matplotlib, and delivers the results to Slack and
-back to the Asana task.
+Salesforce API, loads raw tables in Snowflake, transforms them with dbt into
+analytics marts, renders four charts with matplotlib, and delivers the results
+to Slack and back to the Asana task.
 
 Built as a proof of concept to show end-to-end pipeline design: batched API
-extraction, idempotent `MERGE` loads, a funnel and time-in-stage derived from
-`OpportunityHistory` (not hard-coded), a single parameterized Kestra subflow
-with a scheduled poller and a failure handler, plus unit tests and CI.
+extraction, idempotent `MERGE` loads into a raw landing layer, governed metric
+derivation in dbt (funnel, time-in-stage, forecast weights), a single
+parameterized Kestra subflow with a scheduled poller and a failure handler, plus
+unit tests and CI.
 
-**What this demonstrates:** orchestration (Kestra), dimensional modeling
-(Snowflake star schema), API extraction with batching, idempotent loads, metric
-derivation in SQL, and a tested, CI-checked codebase.
+**What this demonstrates:** orchestration (Kestra), ELT with dbt on Snowflake,
+API extraction with batching, idempotent loads, metric derivation in SQL, and a
+tested, CI-checked codebase.
 
 An optional final step asks an LLM for a one-paragraph commentary per chart. It
 is a thin enrichment layer — the numbers come from SQL, and the pipeline runs
@@ -42,9 +43,9 @@ asana-poller (Kestra, every 6h)  ──►  list matching tasks
 analytics-workflow (Kestra)      ──►  python/main.py <workflow_type>
    │                                       │
    │                                       ├─ Salesforce: Opportunity, Task, OpportunityHistory
-   │                                       ├─ Snowflake: MERGE into fact + dim tables
-   │                                       ├─ Snowflake: SQL metrics + funnel
-   │                                       ├─ matplotlib: 4 charts
+   │                                       ├─ Snowflake: MERGE into raw_* landing tables
+   │                                       ├─ dbt: staging → marts (metrics, funnel, forecast)
+   │                                       ├─ matplotlib: 4 charts (reads marts)
    │                                       ├─ (optional) LLM commentary per chart
    │                                       ├─ Slack: structured notification
    │                                       └─ Asana: chart attachments + comment + complete
@@ -68,17 +69,19 @@ Both the scheduled poller and the manual trigger call the same subflow.
 ### How conversion is computed
 
 Stage-to-stage conversion uses `OpportunityHistory` rows from Salesforce
-(persisted to `dim_stage_history` in Snowflake), so each conversion percentage
-is a real ratio of unique opportunities that *reached* one stage to those that
-also *reached* the next. No interpolated or hard-coded values.
+(loaded to `raw_stage_history`, modeled through dbt into `fct_stage_conversion`),
+so each conversion percentage is a real ratio of unique opportunities that
+*reached* one stage to those that also *reached* the next. No interpolated or
+hard-coded values.
 
 ### How the forecast weights are computed
 
-Win probability per stage is computed as `won / closed` from historical
-opportunities that ever entered that stage. Stages with fewer than ten closed
-opportunities fall back to documented Salesforce defaults; the chart and Slack
-message both flag which stages used the fallback so the number is never
-confused with a fitted estimate.
+Win probability per stage is modeled in dbt (`fct_stage_win_probability`) as
+`won / closed` from historical opportunities that ever entered that stage.
+Stages with fewer than ten closed opportunities fall back to documented defaults
+from the `default_stage_weights` seed; the chart and Slack message both flag
+which stages used the fallback so the number is never confused with a fitted
+estimate.
 
 ### Optional LLM commentary
 
@@ -97,7 +100,8 @@ Either way the metrics, charts, Slack message, and Asana delivery are unaffected
 
 - **Kestra** — orchestration (subflow + ForEach + failure handler)
 - **Salesforce REST/SOQL** — `Opportunity`, `Task`, `OpportunityHistory`
-- **Snowflake** — `fact_opportunities`, `dim_activities`, `dim_stage_history`, `pipeline_runs`
+- **Snowflake** — raw landing tables + dbt marts + `pipeline_runs`
+- **dbt** — staging, intermediate, and mart models with schema tests
 - **Python 3.11** — pandas, matplotlib, simple-salesforce, snowflake-connector-python
 - **Slack** — structured incoming-webhook notifications
 - **Asana** — request intake (tag-based) and result delivery
@@ -196,12 +200,27 @@ python main.py sales-pipeline-health --skip-ai # metrics + charts only, no LLM s
 
 ## Data model
 
-| Table                 | Purpose                                                                |
-|-----------------------|------------------------------------------------------------------------|
-| `fact_opportunities`  | Current state per opportunity, plus derived `days_open`, `days_to_close`, `total_activities`. Owner is updated on MERGE so reassignments don't go silent. |
-| `dim_activities`      | One row per linked Salesforce `Task` activity.                         |
-| `dim_stage_history`   | One row per `OpportunityHistory` transition. Powers the funnel and time-in-stage queries. |
-| `pipeline_runs`       | Run audit log: status, records processed, error text on failure, and (when the optional commentary runs) the LLM token usage and approximate cost. |
+### Raw landing (Python MERGE)
+
+| Table               | Purpose                                                         |
+|---------------------|-----------------------------------------------------------------|
+| `raw_opportunities` | Current Salesforce opportunity snapshot per run.                  |
+| `raw_activities`    | Linked `Task` rows per opportunity.                             |
+| `raw_stage_history` | `OpportunityHistory` transitions.                               |
+| `pipeline_runs`     | Run audit log: status, records processed, error text, optional LLM token/cost. |
+
+### dbt marts (workflows read these)
+
+| Model                         | Purpose                                                                |
+|-------------------------------|------------------------------------------------------------------------|
+| `fct_opportunities`           | Opportunity grain with `days_open`, `days_to_close`, `total_activities`. |
+| `fct_pipeline_summary`        | Single-row pipeline health headline metrics.                           |
+| `fct_pipeline_stage_metrics`  | Open pipeline by stage.                                                |
+| `fct_stage_conversion`        | Funnel conversion percentages from stage history.                      |
+| `fct_stage_duration`          | Average days per stage.                                                |
+| `fct_stage_win_probability`   | Governed win probability with historical/default flag.                 |
+| `fct_revenue_forecast`        | Weighted forecast by open stage.                                       |
+| `fct_rep_performance`         | Closed-opportunity metrics per rep.                                    |
 
 ## Tests
 
@@ -213,14 +232,15 @@ pytest
 
 The suite covers the parts most likely to drift silently: Slack insight
 parsing, retry semantics, prompt rendering, environment-variable fallback,
-and the historical-vs-fallback weight derivation used by the revenue forecast.
-CI runs `ruff`, `pytest`, and a YAML lint over the Kestra flows on every PR.
+and revenue-forecast metric assembly from dbt marts. CI runs `ruff`, `pytest`,
+`dbt parse`, and a YAML lint over the Kestra flows on every PR.
 
 ## Project layout
 
 ```
 .
 ├── .github/workflows/ci.yml
+├── dbt/                                # dbt project (staging → marts)
 ├── docker/docker-compose.yml
 ├── kestra/flows/
 │   ├── analytics-workflow.yml          # parameterized subflow
@@ -231,7 +251,7 @@ CI runs `ruff`, `pytest`, and a YAML lint over the Kestra flows on every PR.
 │   ├── clients/                        # salesforce, snowflake, gemini, slack, asana
 │   ├── workflows/                      # one module per analysis type, plus shared extract/load
 │   ├── config/                         # settings + prompts
-│   ├── utils/                          # logger, retry, chart cleanup
+│   ├── utils/                          # logger, retry, dbt runner, chart cleanup
 │   ├── tests/
 │   ├── main.py
 │   ├── requirements.txt

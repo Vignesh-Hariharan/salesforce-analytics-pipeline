@@ -12,7 +12,9 @@ CREATE WAREHOUSE IF NOT EXISTS COMPUTE_WH
 
 USE WAREHOUSE COMPUTE_WH;
 
-CREATE TABLE IF NOT EXISTS fact_opportunities (
+-- Raw landing tables: written by the Python loader only. No derivation here;
+-- dbt builds staging, intermediate, and mart models on top.
+CREATE TABLE IF NOT EXISTS raw_opportunities (
     opportunity_id     VARCHAR(18) PRIMARY KEY,
     opportunity_name   VARCHAR(255),
     amount             NUMBER(18,2),
@@ -23,13 +25,10 @@ CREATE TABLE IF NOT EXISTS fact_opportunities (
     is_won             BOOLEAN,
     owner_id           VARCHAR(18),
     owner_name         VARCHAR(100),
-    days_open          NUMBER,
-    days_to_close      NUMBER,
-    total_activities   NUMBER,
     load_timestamp     TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
-CREATE TABLE IF NOT EXISTS dim_activities (
+CREATE TABLE IF NOT EXISTS raw_activities (
     activity_id        VARCHAR(18) PRIMARY KEY,
     opportunity_id     VARCHAR(18),
     activity_type      VARCHAR(255),
@@ -38,9 +37,7 @@ CREATE TABLE IF NOT EXISTS dim_activities (
     load_timestamp     TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
--- Stage transitions sourced from Salesforce OpportunityHistory.
--- Required for honest funnel conversion and time-in-stage metrics.
-CREATE TABLE IF NOT EXISTS dim_stage_history (
+CREATE TABLE IF NOT EXISTS raw_stage_history (
     history_id         VARCHAR(18) PRIMARY KEY,
     opportunity_id     VARCHAR(18),
     stage_name         VARCHAR(100),

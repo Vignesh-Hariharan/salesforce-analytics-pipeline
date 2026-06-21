@@ -3,7 +3,7 @@ matplotlib.use('Agg')
 
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -12,29 +12,13 @@ from clients.salesforce_client import SalesforceClient
 from clients.snowflake_client import SnowflakeClient
 from config import settings
 from utils.logger import setup_logger
-from workflows._shared import chart_path, extract_and_load, generate_optional_commentary
+from workflows._shared import (
+    chart_path, extract_and_load, generate_optional_commentary, run_dbt_transform,
+)
 
 logger = setup_logger(__name__)
 
 WORKFLOW_TYPE = 'revenue-forecast'
-
-# When stage history is too thin to derive a stable historical win-rate, fall
-# back to these widely-used Salesforce defaults so the forecast still produces
-# something defensible. The fallback flag is surfaced to the user so the chart
-# is never confused with a model fit.
-DEFAULT_STAGE_WEIGHTS = {
-    'Prospecting': 0.10,
-    'Qualification': 0.25,
-    'Needs Analysis': 0.40,
-    'Proposal': 0.60,
-    'Negotiation': 0.80,
-    'Closed Won': 1.00,
-}
-
-# A stage needs at least this many historical opportunities before we trust the
-# data-derived weight. Below the threshold, the default value is used and the
-# row is flagged.
-MIN_STAGE_SAMPLE = 10
 
 
 def run_workflow(run_id: str) -> Dict:
@@ -46,6 +30,7 @@ def run_workflow(run_id: str) -> Dict:
 
     try:
         opportunities = extract_and_load(sf_client, snow_client, days=90)
+        run_dbt_transform()
 
         metrics = calculate_metrics(snow_client)
         chart_paths = generate_charts(snow_client, metrics)
@@ -92,121 +77,52 @@ def run_workflow(run_id: str) -> Dict:
         snow_client.close()
 
 
-def derive_stage_weights(snow_client: SnowflakeClient) -> Tuple[Dict[str, Dict], int]:
-    """Compute win probability per stage from historical data.
-
-    For each stage that an opportunity ever entered, win-rate = won / (won + lost).
-    Below MIN_STAGE_SAMPLE we don't trust the estimate and fall back to the
-    documented industry default.
-    """
-    rows = snow_client.execute_query("""
-        WITH first_touch AS (
-            SELECT DISTINCT h.opportunity_id, h.stage_name
-            FROM dim_stage_history h
-        )
-        SELECT
-            ft.stage_name,
-            COUNT(*)                                      AS sample_size,
-            SUM(CASE WHEN o.is_won THEN 1 ELSE 0 END)     AS won_count,
-            SUM(CASE WHEN o.is_closed AND NOT o.is_won
-                     THEN 1 ELSE 0 END)                   AS lost_count
-        FROM first_touch ft
-        JOIN fact_opportunities o ON o.opportunity_id = ft.opportunity_id
-        WHERE o.is_closed
-        GROUP BY ft.stage_name
-    """)
-
-    weights: Dict[str, Dict] = {}
-    for r in rows:
-        sample = r['SAMPLE_SIZE'] or 0
-        won = r['WON_COUNT'] or 0
-        if sample >= MIN_STAGE_SAMPLE:
-            weights[r['STAGE_NAME']] = {
-                'weight': won / sample,
-                'sample_size': sample,
-                'source': 'historical',
-            }
-
-    fallback_used = 0
-    for stage, default in DEFAULT_STAGE_WEIGHTS.items():
-        if stage not in weights:
-            weights[stage] = {
-                'weight': default,
-                'sample_size': 0,
-                'source': 'default',
-            }
-            fallback_used += 1
-
-    if fallback_used:
-        logger.warning(
-            f"{fallback_used}/{len(DEFAULT_STAGE_WEIGHTS)} stages fell back to default weights "
-            f"(need >= {MIN_STAGE_SAMPLE} closed opps for historical fit)"
-        )
-
-    return weights, fallback_used
+def map_stage_forecasts(rows: List[Dict]) -> List[Dict]:
+    """Map fct_revenue_forecast rows into the chart/summary shape."""
+    return [
+        {
+            'stage': r['STAGE_NAME'],
+            'value': float(r['STAGE_VALUE'] or 0),
+            'count': r['OPEN_COUNT'],
+            'weight': float(r['WEIGHT'] or 0),
+            'weighted_value': float(r['WEIGHTED_VALUE'] or 0),
+            'sample_size': r['SAMPLE_SIZE'] or 0,
+            'weight_source': (r['WEIGHT_SOURCE'] or 'default').lower(),
+        }
+        for r in rows
+    ]
 
 
 def calculate_metrics(snow_client: SnowflakeClient) -> Dict:
-    pipeline = snow_client.execute_query("""
-        SELECT SUM(amount) AS total_pipeline,
-               COUNT(*)    AS open_opps
-        FROM fact_opportunities
-        WHERE NOT is_closed AND amount > 0
-    """)[0]
+    summary = snow_client.execute_query("SELECT * FROM fct_revenue_summary")[0]
 
-    open_stages = snow_client.execute_query("""
-        SELECT stage_name,
-               SUM(amount) AS stage_value,
-               COUNT(*)    AS count
-        FROM fact_opportunities
-        WHERE NOT is_closed AND amount > 0
-        GROUP BY stage_name
+    stage_rows = snow_client.execute_query("""
+        SELECT
+            stage_name,
+            open_count,
+            stage_value,
+            weight,
+            weighted_value,
+            sample_size,
+            weight_source
+        FROM fct_revenue_forecast
+        ORDER BY stage_position
     """)
 
-    weights, fallback_count = derive_stage_weights(snow_client)
-
-    weighted_forecast = 0.0
-    stage_forecasts = []
-    for s in open_stages:
-        stage = s['STAGE_NAME']
-        value = float(s['STAGE_VALUE'] or 0)
-        meta = weights.get(stage, {'weight': 0.25, 'sample_size': 0, 'source': 'default'})
-        weighted_value = value * meta['weight']
-        weighted_forecast += weighted_value
-        stage_forecasts.append({
-            'stage': stage,
-            'value': value,
-            'count': s['COUNT'],
-            'weight': meta['weight'],
-            'weighted_value': weighted_value,
-            'sample_size': meta['sample_size'],
-            'weight_source': meta['source'],
-        })
-
     historical_revenue = snow_client.execute_query("""
-        SELECT DATE_TRUNC('month', close_date) AS month,
-               SUM(amount)                      AS revenue
-        FROM fact_opportunities
-        WHERE is_won AND close_date >= DATEADD(month, -6, CURRENT_DATE())
-        GROUP BY month
+        SELECT month, revenue
+        FROM fct_monthly_closed_revenue
         ORDER BY month
     """)
 
-    at_risk = snow_client.execute_query("""
-        SELECT SUM(amount) AS at_risk_value
-        FROM fact_opportunities
-        WHERE NOT is_closed AND days_open > 90
-    """)
-    at_risk_value = float((at_risk[0]['AT_RISK_VALUE'] or 0)) if at_risk else 0.0
-
     return {
-        'total_pipeline': float(pipeline['TOTAL_PIPELINE'] or 0),
-        'open_opps': int(pipeline['OPEN_OPPS'] or 0),
-        'weighted_forecast': weighted_forecast,
-        'at_risk_value': at_risk_value,
-        'stage_forecasts': stage_forecasts,
+        'total_pipeline': float(summary['TOTAL_PIPELINE'] or 0),
+        'open_opps': int(summary['OPEN_OPPS'] or 0),
+        'weighted_forecast': float(summary['WEIGHTED_FORECAST'] or 0),
+        'at_risk_value': float(summary['AT_RISK_VALUE'] or 0),
+        'stage_forecasts': map_stage_forecasts(stage_rows),
         'historical_revenue': historical_revenue,
-        'weights_fallback_count': fallback_count,
+        'weights_fallback_count': int(summary['WEIGHTS_FALLBACK_COUNT'] or 0),
     }
 
 
@@ -224,8 +140,8 @@ def generate_charts(snow_client: SnowflakeClient, metrics: Dict) -> List[Path]:
 
 def _chart_waterfall(metrics: Dict, out: Path) -> List[Path]:
     bars = [
-        ('Total pipeline',   metrics['total_pipeline']),
-        ('At risk (>90d)',  -metrics['at_risk_value']),
+        ('Total pipeline', metrics['total_pipeline']),
+        ('At risk (>90d)', -metrics['at_risk_value']),
         ('Weighted forecast', metrics['weighted_forecast']),
     ]
     plt.figure(figsize=(10, 6))
@@ -304,7 +220,7 @@ def _chart_revenue_trend(metrics: Dict, out: Path) -> List[Path]:
 def _chart_age_distribution(snow_client: SnowflakeClient, out: Path) -> List[Path]:
     rows = snow_client.execute_query("""
         SELECT days_open
-        FROM fact_opportunities
+        FROM fct_opportunities
         WHERE NOT is_closed AND days_open IS NOT NULL
     """)
     if not rows:

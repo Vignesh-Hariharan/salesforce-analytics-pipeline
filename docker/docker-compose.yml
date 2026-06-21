@@ -9,6 +9,7 @@ services:
       - /tmp/kestra-wd:/tmp/kestra-wd
       - ../kestra/flows:/app/flows
       - ../python:/app/python
+      - ../dbt:/app/dbt
       - ../outputs:/app/outputs
     environment:
       SECRET_SNOWFLAKE_ACCOUNT: "${KESTRA_SECRET_SNOWFLAKE_ACCOUNT}"

@@ -6,3 +6,4 @@ matplotlib==3.8.3
 pandas==2.2.1
 python-dotenv==1.2.2
 Pillow==12.2.0
+dbt-snowflake==1.11.5

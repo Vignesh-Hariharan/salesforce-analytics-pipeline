@@ -37,6 +37,12 @@ jobs:
         working-directory: python
         run: pytest -q
 
+      - name: dbt deps and parse
+        run: |
+          cd dbt
+          dbt deps --profiles-dir .
+          dbt parse --profiles-dir .
+
       - name: Validate Kestra flow YAML
         run: |
           python <<'PY'
