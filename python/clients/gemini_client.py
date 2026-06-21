@@ -12,7 +12,7 @@ from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-DEFAULT_MODEL = "gemini-2.5-flash-lite"
+DEFAULT_MODEL = settings.GEMINI_MODEL
 MAX_OUTPUT_TOKENS = 1000
 
 # Google list prices for gemini-2.5-flash-lite, USD per 1M tokens. Used only to

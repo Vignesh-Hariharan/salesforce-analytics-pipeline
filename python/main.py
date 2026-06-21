@@ -1,8 +1,10 @@
+import argparse
 import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+import os
 
 from clients.asana_client import AsanaClient
 from clients.slack_client import SlackClient
@@ -131,16 +133,27 @@ def _post_asana_failure(task_gid: str, workflow_type: str, run_id: str, error: s
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python main.py <workflow_type> [asana_task_gid] [asana_task_url]")
-        sys.exit(2)
+    parser = argparse.ArgumentParser(
+        description="Run a Salesforce analytics workflow locally.")
+    parser.add_argument(
+        "workflow_type",
+        choices=VALID_WORKFLOW_TYPES,
+        help="Which analysis to run",
+    )
+    parser.add_argument("asana_task_gid", nargs="?", default=None)
+    parser.add_argument("asana_task_url", nargs="?", default=None)
+    parser.add_argument(
+        "--skip-ai",
+        action="store_true",
+        help="Skip optional LLM chart commentary even when GEMINI_API_KEY is set",
+    )
+    args = parser.parse_args()
 
-    workflow = sys.argv[1]
-    gid = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] else None
-    url = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else None
+    if args.skip_ai:
+        os.environ["SKIP_AI"] = "1"
 
     try:
-        outcome = run_workflow(workflow, gid, url)
+        outcome = run_workflow(args.workflow_type, args.asana_task_gid, args.asana_task_url)
         print(f"SUCCESS: {outcome['status']}")
         sys.exit(0)
     except Exception as exc:

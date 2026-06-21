@@ -1,6 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
+import os
 import pandas as pd
 
 from clients.gemini_client import GeminiClient
@@ -75,13 +76,16 @@ def generate_optional_commentary(workflow_type: str, data_summary: str,
     logged so a skipped commentary is never silent.
     """
     empty_stats = {'tokens': 0, 'cost': 0.0}
-    if not settings.is_gemini_configured():
-        logger.info("GEMINI_API_KEY not set; skipping optional LLM commentary")
+    if not settings.is_llm_commentary_enabled():
+        if os.getenv('SKIP_AI', '').lower() in ('1', 'true', 'yes'):
+            logger.info("SKIP_AI set; skipping optional LLM commentary")
+        else:
+            logger.info("GEMINI_API_KEY not set; skipping optional LLM commentary")
         return "", empty_stats
 
     prompt, temperature = get_prompt(workflow_type, data_summary)
     try:
-        client = GeminiClient(temperature=temperature)
+        client = GeminiClient(model_name=settings.GEMINI_MODEL, temperature=temperature)
         result = client.generate_insights(prompt, chart_paths)
         return result['insights'], {'tokens': result['total_tokens'], 'cost': result['cost']}
     except GeminiAPIError as e:

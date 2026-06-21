@@ -3,8 +3,9 @@ namespace: salesforce.analytics
 
 description: |
   Parameterized analytics runner. Called as a subflow by the Asana poller
-  and the manual trigger. Pulls a Salesforce -> Snowflake -> charts -> Gemini
-  pass for one workflow type and writes the run to pipeline_runs.
+  and the manual trigger. Runs Salesforce extract/load, Snowflake SQL metrics,
+  chart rendering, and Slack/Asana delivery for one workflow type. Optional
+  LLM chart commentary when GEMINI_API_KEY is set (or pass --skip-ai).
 
 inputs:
   - id: workflow_type

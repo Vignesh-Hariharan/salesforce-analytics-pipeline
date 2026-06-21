@@ -52,9 +52,10 @@ SALESFORCE_DOMAIN         = os.getenv('SALESFORCE_DOMAIN', 'login')
 
 SLACK_WEBHOOK_URL = _required('SLACK_WEBHOOK_URL')
 
-# Optional: enables the LLM chart-commentary step. Absent it, the pipeline
+# Optional LLM chart commentary. Absent a key (or with SKIP_AI set), the pipeline
 # still extracts, loads, computes metrics, renders charts, and delivers them.
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash-lite')
 
 ASANA_ACCESS_TOKEN = os.getenv('ASANA_ACCESS_TOKEN')
 ASANA_PROJECT_GID  = os.getenv('ASANA_PROJECT_GID')
@@ -69,3 +70,9 @@ def is_asana_configured() -> bool:
 
 def is_gemini_configured() -> bool:
     return bool(GEMINI_API_KEY)
+
+
+def is_llm_commentary_enabled() -> bool:
+    if os.getenv('SKIP_AI', '').lower() in ('1', 'true', 'yes'):
+        return False
+    return is_gemini_configured()

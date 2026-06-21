@@ -191,6 +191,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 python main.py sales-pipeline-health           # no Asana side-effects
 python main.py revenue-forecast <task_gid> <task_url>
+python main.py sales-pipeline-health --skip-ai # metrics + charts only, no LLM step
 ```
 
 ## Data model

@@ -5,7 +5,19 @@ import workflows._shared as shared
 
 
 def test_commentary_skipped_when_unconfigured(monkeypatch):
-    monkeypatch.setattr(shared.settings, "is_gemini_configured", lambda: False)
+    monkeypatch.setattr(shared.settings, "is_llm_commentary_enabled", lambda: False)
+
+    insights, stats = shared.generate_optional_commentary(
+        "sales-pipeline-health", "Total Opportunities: 10", [])
+
+    assert insights == ""
+    assert stats == {"tokens": 0, "cost": 0.0}
+
+
+def test_commentary_skipped_when_skip_ai_set(monkeypatch):
+    monkeypatch.setenv("SKIP_AI", "1")
+    monkeypatch.setattr(shared.settings, "is_gemini_configured", lambda: True)
+    monkeypatch.setattr(shared.settings, "is_llm_commentary_enabled", lambda: False)
 
     insights, stats = shared.generate_optional_commentary(
         "sales-pipeline-health", "Total Opportunities: 10", [])
@@ -15,7 +27,8 @@ def test_commentary_skipped_when_unconfigured(monkeypatch):
 
 
 def test_commentary_degrades_on_api_error(monkeypatch):
-    monkeypatch.setattr(shared.settings, "is_gemini_configured", lambda: True)
+    monkeypatch.delenv("SKIP_AI", raising=False)
+    monkeypatch.setattr(shared.settings, "is_llm_commentary_enabled", lambda: True)
 
     def _raise(*args, **kwargs):
         raise shared.GeminiAPIError("model unavailable")
@@ -30,7 +43,8 @@ def test_commentary_degrades_on_api_error(monkeypatch):
 
 
 def test_commentary_returns_model_output_when_configured(monkeypatch):
-    monkeypatch.setattr(shared.settings, "is_gemini_configured", lambda: True)
+    monkeypatch.delenv("SKIP_AI", raising=False)
+    monkeypatch.setattr(shared.settings, "is_llm_commentary_enabled", lambda: True)
 
     class FakeClient:
         def __init__(self, *args, **kwargs):
