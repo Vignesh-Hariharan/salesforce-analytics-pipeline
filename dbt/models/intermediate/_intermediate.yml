@@ -1,0 +1,33 @@
+version: 2
+
+models:
+  - name: int_opportunity_activity_counts
+    description: Activity count per opportunity.
+    columns:
+      - name: opportunity_id
+        tests: [not_null, unique]
+
+  - name: int_stage_durations
+    description: Average days spent in each stage, from consecutive history rows.
+    columns:
+      - name: stage_name
+        tests: [not_null, unique]
+
+  - name: int_stage_conversions
+    description: Funnel conversion to the next stage, in seed order.
+    columns:
+      - name: stage_name
+        tests: [not_null, unique]
+      - name: conversion_pct
+        description: Percent of opportunities at this stage that reached the next stage; null at the final stage.
+
+  - name: int_stage_win_rates
+    description: Historical win rate per stage with the sample size behind it.
+    columns:
+      - name: stage_name
+        tests: [not_null, unique]
+      - name: historical_win_rate
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1

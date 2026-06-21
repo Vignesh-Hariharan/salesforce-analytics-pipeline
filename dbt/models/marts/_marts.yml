@@ -1,0 +1,68 @@
+version: 2
+
+models:
+  - name: dim_stage
+    description: Seed-driven stage dimension with funnel order and default weights.
+    columns:
+      - name: stage_name
+        tests: [not_null, unique]
+
+  - name: dim_rep
+    description: One row per opportunity owner.
+    columns:
+      - name: owner_id
+        tests: [not_null, unique]
+
+  - name: dim_date
+    description: Generated calendar spine for trend analysis.
+    columns:
+      - name: date_day
+        tests: [not_null, unique]
+
+  - name: fct_opportunities
+    description: Opportunity-grain fact with derived age and activity counts.
+    columns:
+      - name: opportunity_id
+        tests: [not_null, unique]
+      - name: stage_name
+        tests: [not_null]
+
+  - name: fct_pipeline_summary
+    description: Single-row pipeline health headline metrics.
+
+  - name: fct_pipeline_stage_metrics
+    description: Open pipeline breakdown by stage.
+
+  - name: fct_stage_conversion
+    description: Funnel conversion percentages between stages.
+
+  - name: fct_stage_duration
+    description: Average days per stage from OpportunityHistory.
+
+  - name: fct_weekly_new_opportunities
+    description: Weekly new-opportunity counts for the trailing 12 weeks.
+
+  - name: fct_stage_win_probability
+    description: Governed win probability per stage with historical/default flag.
+    columns:
+      - name: stage_name
+        tests: [not_null, unique]
+      - name: weight_source
+        tests:
+          - accepted_values:
+              values: ['historical', 'default']
+
+  - name: fct_revenue_forecast
+    description: Weighted forecast by open pipeline stage.
+
+  - name: fct_revenue_summary
+    description: Single-row revenue forecast headline metrics.
+
+  - name: fct_monthly_closed_revenue
+    description: Closed-won revenue by month for the trailing six months.
+
+  - name: fct_rep_performance
+    description: Closed-opportunity metrics per rep (minimum three opps).
+    columns:
+      - name: owner_name
+        tests: [not_null]

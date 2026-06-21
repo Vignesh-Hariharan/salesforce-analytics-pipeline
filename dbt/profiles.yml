@@ -1,0 +1,18 @@
+# Env-driven profile. No secrets live here; values resolve from the same
+# environment variables the Python loader uses. Empty defaults let `dbt deps`,
+# `dbt parse`, and sqlfluff run in CI without a live warehouse; a real
+# `dbt build` requires the variables to be set.
+salesforce_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT', '') }}"
+      user: "{{ env_var('SNOWFLAKE_USER', '') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD', '') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE', 'PUBLIC') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE', 'SALES_ANALYTICS') }}"
+      schema: "{{ env_var('SNOWFLAKE_SCHEMA', 'OPPORTUNITIES') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'COMPUTE_WH') }}"
+      threads: 4
+      client_session_keep_alive: false

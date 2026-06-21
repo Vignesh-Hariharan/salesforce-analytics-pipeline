@@ -1,0 +1,26 @@
+version: 2
+
+sources:
+  - name: raw
+    description: >
+      Landing tables written by the Python loader. The loader extracts from the
+      Salesforce API and MERGEs into these tables on their natural keys; it does
+      no derivation. All transformation happens in dbt downstream.
+    database: "{{ env_var('SNOWFLAKE_DATABASE', 'SALES_ANALYTICS') }}"
+    schema: "{{ env_var('SNOWFLAKE_SCHEMA', 'OPPORTUNITIES') }}"
+    tables:
+      - name: raw_opportunities
+        description: One row per Salesforce Opportunity in the load window.
+        columns:
+          - name: opportunity_id
+            tests: [not_null, unique]
+      - name: raw_activities
+        description: One row per Salesforce Task linked to an opportunity.
+        columns:
+          - name: activity_id
+            tests: [not_null, unique]
+      - name: raw_stage_history
+        description: One row per Salesforce OpportunityHistory stage transition.
+        columns:
+          - name: history_id
+            tests: [not_null, unique]

@@ -1,0 +1,8 @@
+stage_name,stage_position,stage_category
+Prospecting,1,Open - Early
+Qualification,2,Open - Early
+Needs Analysis,3,Open - Early
+Proposal,4,Open - Late
+Negotiation,5,Open - Late
+Closed Won,6,Closed Won
+Closed Lost,99,Closed Lost

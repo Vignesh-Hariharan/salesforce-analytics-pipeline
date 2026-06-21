@@ -1,0 +1,39 @@
+version: 2
+
+seeds:
+  - name: stage_order
+    description: >
+      Canonical opportunity stage ordering and category. Drives the funnel
+      position and stage grouping so the order lives in one reviewable place
+      rather than being hard-coded in SQL or Python. Position 99 marks terminal
+      non-funnel stages (Closed Lost).
+    columns:
+      - name: stage_name
+        description: Salesforce StageName value.
+        tests: [not_null, unique]
+      - name: stage_position
+        description: Funnel order; 1 is earliest. 99 is reserved for non-funnel terminal stages.
+        tests: [not_null]
+      - name: stage_category
+        description: Coarse grouping used for reporting.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["Open - Early", "Open - Late", "Closed Won", "Closed Lost"]
+
+  - name: default_stage_weights
+    description: >
+      Documented Salesforce default win probabilities per stage. Used only as a
+      fallback when a stage has too few closed opportunities to derive a
+      historical win rate; every fallback is flagged downstream.
+    columns:
+      - name: stage_name
+        description: Salesforce StageName value.
+        tests: [not_null, unique]
+      - name: default_weight
+        description: Default win probability in the range 0-1.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1

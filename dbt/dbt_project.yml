@@ -1,0 +1,48 @@
+name: salesforce_analytics
+version: "1.0.0"
+config-version: 2
+
+profile: salesforce_analytics
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+snapshot-paths: ["snapshots"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# The Python loader lands raw_* tables and reads the marts back by name, so every
+# model resolves into the single configured schema rather than dbt's default
+# "<schema>_<custom>" layout (see macros/generate_schema_name.sql).
+vars:
+  # Lower bound for the generated date dimension. Opportunities older than this
+  # are still loaded; the spine only needs to cover the reporting window.
+  date_spine_start: "2023-01-01"
+  # Minimum closed opportunities before a stage's win rate is trusted over the
+  # documented default weight.
+  min_stage_sample: 10
+  # Days open after which an open opportunity is flagged as at risk.
+  at_risk_days: 90
+
+models:
+  salesforce_analytics:
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: ephemeral
+    marts:
+      +materialized: table
+
+seeds:
+  salesforce_analytics:
+    +schema: null
+    stage_order:
+      +column_types:
+        stage_position: integer
+    default_stage_weights:
+      +column_types:
+        default_weight: float

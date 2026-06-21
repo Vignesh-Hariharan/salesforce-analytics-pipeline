@@ -1,0 +1,7 @@
+stage_name,default_weight
+Prospecting,0.10
+Qualification,0.25
+Needs Analysis,0.40
+Proposal,0.60
+Negotiation,0.80
+Closed Won,1.00

@@ -21,3 +21,8 @@ env/
 .venv/
 
 outputs/charts/*.png
+
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+dbt/.user.yml

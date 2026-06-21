@@ -1,0 +1,44 @@
+version: 2
+
+models:
+  - name: stg_opportunities
+    description: Cleaned, typed opportunities. One row per opportunity.
+    columns:
+      - name: opportunity_id
+        description: Salesforce 18-character Opportunity Id.
+        tests: [not_null, unique]
+      - name: stage_name
+        description: Current Salesforce StageName.
+        tests: [not_null]
+      - name: is_closed
+        tests: [not_null]
+      - name: is_won
+        tests: [not_null]
+
+  - name: stg_activities
+    description: Cleaned, typed activities. One row per Salesforce Task.
+    columns:
+      - name: activity_id
+        tests: [not_null, unique]
+      - name: opportunity_id
+        description: Parent opportunity (Task.WhatId).
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_opportunities')
+              field: opportunity_id
+
+  - name: stg_stage_history
+    description: Cleaned, typed stage transitions from OpportunityHistory.
+    columns:
+      - name: history_id
+        tests: [not_null, unique]
+      - name: opportunity_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_opportunities')
+              field: opportunity_id
+      - name: entered_at
+        description: Timestamp the opportunity entered the stage.
+        tests: [not_null]
