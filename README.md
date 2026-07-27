@@ -1,5 +1,12 @@
 # Salesforce Opportunity Analytics Pipeline
 
+[![CI](https://github.com/Vignesh-Hariharan/salesforce-analytics-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/Vignesh-Hariharan/salesforce-analytics-pipeline/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg)](https://www.python.org/)
+[![Snowflake](https://img.shields.io/badge/Snowflake-29B5E8.svg)](https://www.snowflake.com/)
+[![dbt](https://img.shields.io/badge/dbt-FF694B.svg)](https://www.getdbt.com/)
+[![Kestra](https://img.shields.io/badge/Kestra-6667AB.svg)](https://kestra.io/)
+
 An event-driven reporting pipeline for Salesforce opportunity data. Tagging an
 Asana task triggers a Kestra workflow that extracts opportunities from the
 Salesforce API, loads raw tables in Snowflake, transforms them with dbt into
