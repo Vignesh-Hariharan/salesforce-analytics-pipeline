@@ -7,11 +7,12 @@
 [![dbt](https://img.shields.io/badge/dbt-FF694B.svg)](https://www.getdbt.com/)
 [![Kestra](https://img.shields.io/badge/Kestra-6667AB.svg)](https://kestra.io/)
 
-An event-driven reporting pipeline for Salesforce opportunity data. Tagging an
-Asana task triggers a Kestra workflow that extracts opportunities from the
-Salesforce API, loads raw tables in Snowflake, transforms them with dbt into
-analytics marts, renders four charts with matplotlib, and delivers the results
-to Slack and back to the Asana task.
+A request-driven reporting pipeline for Salesforce opportunity data. Tagging an
+Asana task queues a run, picked up by a 6-hourly Kestra poller (or a manual
+trigger). The workflow extracts opportunities from the Salesforce API, loads
+raw tables in Snowflake, transforms them with dbt into analytics marts,
+renders four charts with matplotlib, and delivers the results to Slack and
+back to the Asana task.
 
 Built as a proof of concept to show end-to-end pipeline design: batched API
 extraction, idempotent `MERGE` loads into a raw landing layer, governed metric
