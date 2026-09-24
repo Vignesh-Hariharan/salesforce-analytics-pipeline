@@ -28,7 +28,9 @@ models:
         tests: [not_null]
 
   - name: fct_pipeline_summary
-    description: Single-row pipeline health headline metrics.
+    description: >
+      Single-row pipeline health headline metrics.
+      close_rate is won / (won + lost); open opportunities are excluded.
 
   - name: fct_pipeline_stage_metrics
     description: Open pipeline breakdown by stage.
